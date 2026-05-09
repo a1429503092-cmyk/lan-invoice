@@ -1,0 +1,49 @@
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 依赖缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 数据文件（不提交敏感数据）
+data/
+invoices_data.json
+screenshots/
+contracts/
+
+# 打包输出
+dist/
+build/
+*.spec
+
+# IDE配置
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志和临时文件
+*.log
+*.tmp
+*.bak
+*.backup
+
+# uv 工具
+uv.lock
+
+# 测试输出
+test_out.txt
+out.txt
+
+# 旧版本压缩包
+*.zip
