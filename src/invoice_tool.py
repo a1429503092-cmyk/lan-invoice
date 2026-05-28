@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QSizePolicy, QMenu, QAction, QListWidget, QListWidgetItem,
     QSplitter, QInputDialog, QCheckBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QMimeData, QUrl
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QPixmap, QDragEnterEvent, QDropEvent, QIcon
 
 
@@ -57,7 +57,8 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
         "invoice_date": "",
         "screenshots": [],   # 付款截图路径列表
         "contracts": [],     # 合同文件路径列表
-        "error": ""
+        "error": "",
+        "is_red": False,     # 是否为红票（金额为负数则为红票）
     }
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -66,6 +67,15 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
                 t = page.extract_text()
                 if t:
                     full_text += t + "\n"
+                # 也从表格提取，防止日期被截断或跨行
+                try:
+                    tables = page.extract_tables()
+                    for table in tables:
+                        for row in table:
+                            if row:
+                                full_text += " ".join(str(c) or "" for c in row) + "\n"
+                except Exception:
+                    pass
 
         if not full_text:
             result["error"] = "无法提取文字内容（可能是扫描件）"
@@ -106,67 +116,287 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
         m = re.search(r'发票号码[：:]\s*(\d+)', full_text)
         if m:
             result["invoice_no"] = m.group(1)
+        # 兜底：发票号码可能写成"发票代码：xxx 发票号码：xxx"或直接"号码："
+        if not result["invoice_no"]:
+            m = re.search(r'(?:发票)?号\s*码[：:]\s*(\d{8,})', full_text)
+            if m:
+                result["invoice_no"] = m.group(1)
+        if not result["invoice_no"]:
+            # 找全文中纯数字且长度>=8的长串（排除金额），作为发票号码
+            for num in re.findall(r'\b(\d{10,20})\b', full_text):
+                if num not in (result.get("invoice_no", ""),):
+                    result["invoice_no"] = num
+                    break
 
         # ── 开票日期 ──────────────────────────────
-        m = re.search(r'开票日期[：:]\s*(\d{4}年\d{2}月\d{2}日)', full_text)
-        if m:
-            result["invoice_date"] = m.group(1)
+        def _norm_date(y, mo, d=None):
+            """统一转换为 xxxx年xx月xx日；必须有日才返回"""
+            mo = mo.zfill(2)
+            if d:
+                return f"{y}年{mo}月{d.zfill(2)}日"
+            return None
+
+        # 预处理：折叠多余空白，让跨行/跨空格日期变成连续格式
+        # 注：\s 在 Python re 中匹配空格、Tab、换行，不需要写 \\s\\n
+        _clean = re.sub(r'[\t ]+', ' ', full_text)     # 多余空格→单空格
+        _clean = re.sub(r'\n+', ' ', _clean)           # 换行→空格
+        _clean = re.sub(r'·+|──+', '', _clean)         # 去除 PDF 常见装饰字符
+
+        # 优先：含"开票日期"关键字（最精确）
+        for pat in [
+            r'开票日期[：: ]*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日',           # 2024年01月01日
+            r'开票日期[：: ]*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})',             # 2024-01-01 / 2024/01/01 / 2024.01.01
+            r'开票日期[：: ]*(\d{4})(\d{2})(\d{2})(?!\d)',                     # 20240101 纯数字
+        ]:
+            if result["invoice_date"]:
+                break
+            m = re.search(pat, _clean)
+            if m:
+                d = _norm_date(m.group(1), m.group(2), m.group(3))
+                if d:
+                    result["invoice_date"] = d
+
+        # 次优先：含"日期"关键字
+        for pat in [
+            r'日期[：: ]*(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日',
+            r'日期[：: ]*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})',
+        ]:
+            if result["invoice_date"]:
+                break
+            m = re.search(pat, _clean)
+            if m:
+                d = _norm_date(m.group(1), m.group(2), m.group(3))
+                if d:
+                    result["invoice_date"] = d
+
+        # 最后兜底：全文找第一个完整的年月日日期（不加关键字限制）
+        if not result["invoice_date"]:
+            m = re.search(r'(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日', _clean)
+            if m:
+                result["invoice_date"] = _norm_date(m.group(1), m.group(2), m.group(3))
+        if not result["invoice_date"]:
+            m = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', _clean)
+            if m:
+                result["invoice_date"] = _norm_date(m.group(1), m.group(2), m.group(3))
+
+        # ── 区域化解析：先尝试提取"购买方"和"销售方"整块区域 ──
+        # 先提取购买方区域
+        buyer_section = ""
+        seller_section = ""
+        m_buyer = re.search(r'(?:购买方|买方|购方)[\s\n:：信息]*(.+?)(?=销售方|销方|销\s*售|项目|$)', full_text, re.DOTALL)
+        if m_buyer:
+            buyer_section = m_buyer.group(1)
+        m_seller = re.search(r'(?:销售方|销方)[\s\n:：信息]*(.+?)(?=备注|合\s*计|项\s*目|$)', full_text, re.DOTALL)
+        if m_seller:
+            seller_section = m_seller.group(1)
 
         # ── 购买方名称 ────────────────────────────
+        # 模式1：标准"名称："匹配
         m = re.search(r'名称[：:]\s*(.+?)(?:\s+销\s|销\s*名称|统一社会|$)', full_text, re.MULTILINE)
         if m:
             result["buyer_name"] = m.group(1).strip()
         if result["buyer_name"]:
             result["buyer_name"] = re.split(r'\s+销\s*$|\s+销\s+名称', result["buyer_name"])[0].strip()
+        # 模式2：从购买方区域提取名称
+        if not result["buyer_name"] and buyer_section:
+            m = re.search(r'名称[：:]\s*([^\n\r]+)', buyer_section)
+            if m:
+                result["buyer_name"] = m.group(1).strip()
+        # 模式3：从购买方区域提取公司名
+        if not result["buyer_name"] and buyer_section:
+            m = re.search(r'([\u4e00-\u9fa5]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[\u4e00-\u9fa5]*)', buyer_section)
+            if m:
+                result["buyer_name"] = m.group(1).strip()
+        # 模式4：找"购买方"或"买方"后面的公司名
+        if not result["buyer_name"]:
+            m = re.search(r'(?:购买方|买方|购方)[\s\n:：]*([^\n\r]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[^\n\r]*)', full_text)
+            if m:
+                result["buyer_name"] = m.group(1).strip()
+        # 模式5：找第一个带"有限公司"/"公司"的长文本
+        if not result["buyer_name"]:
+            matches = re.findall(r'[\u4e00-\u9fa5]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[\u4e00-\u9fa5]*', full_text)
+            if matches:
+                for name in matches:
+                    if name not in (result.get("seller_name", ""),):
+                        result["buyer_name"] = name
+                        break
 
         # ── 购买方税号 ────────────────────────────
-        ids = re.findall(r'统一社会信用代码/纳税人识别号[：:]\s*([A-Z0-9]+)', full_text)
+        # 模式1：标准格式
+        ids = re.findall(r'统一社会信用代码/纳税人识别号[：:]\s*([A-Z0-9]{15,20})', full_text)
         if ids:
             result["buyer_tax_id"] = ids[0]
+        # 模式2：简化格式
+        if not result["buyer_tax_id"]:
+            m = re.search(r'(?:纳税人识别号|税号|识别号)[：:\s]*([A-Z0-9]{15,20})', full_text)
+            if m:
+                result["buyer_tax_id"] = m.group(1)
+        # 模式3：从购买方区域提取
+        if not result["buyer_tax_id"] and buyer_section:
+            m = re.search(r'([A-Z0-9]{15,20})', buyer_section)
+            if m:
+                result["buyer_tax_id"] = m.group(1)
+        # 模式4：在"购买方"附近抓
+        if not result["buyer_tax_id"]:
+            m = re.search(r'(?:购买方|买方|购方)[^纳]*?([A-Z0-9]{15,20})', full_text, re.DOTALL)
+            if m:
+                result["buyer_tax_id"] = m.group(1)
 
         # ── 销售方名称 ────────────────────────────
-        # 销售方通常出现在购买方之后，先找"销售方"/"销 名称"区域
-        m = re.search(r'销\s*售\s*方\s*名称[：:]\s*(.+?)[\n\r]', full_text)
-        if not m:
-            # 有些发票格式：先出现购方名称，再出现销方名称（两个"名称："）
-            names = re.findall(r'名称[：:]\s*(.+?)(?:\s+|$)', full_text)
-            if len(names) >= 2:
-                # 第一个通常是购方，第二个是销方
-                result["seller_name"] = names[1].strip()
-        else:
+        # 模式1：找"销售方名称："
+        m = re.search(r'销售方名称[：:]\s*([^\n\r]+)', full_text)
+        if m:
             result["seller_name"] = m.group(1).strip()
-        # 兜底：从"销"字段后面取
+        # 模式2：找"销方名称："或"销 名称："（带空格变体）
         if not result["seller_name"]:
-            m = re.search(r'销\s{0,4}名\s{0,4}称[：:]\s*(.+?)[\n\r]', full_text)
+            m = re.search(r'销\s*方\s*名称[：:]\s*([^\n\r]+)', full_text)
             if m:
                 result["seller_name"] = m.group(1).strip()
+        # 模式3：找"销 名 称："（分散字符）
+        if not result["seller_name"]:
+            m = re.search(r'销\s*名\s*称[：:]\s*([^\n\r]+)', full_text)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式4：找"销货方："
+        if not result["seller_name"]:
+            m = re.search(r'销货方[：:]\s*([^\n\r]+)', full_text)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式5：两个"名称："，第二个是销售方（购方在前，销方在后）
+        if not result["seller_name"]:
+            names = re.findall(r'名\s*称[：:]\s*([^\n\r]+)', full_text)
+            if len(names) >= 2:
+                result["seller_name"] = names[-1].strip()  # 取最后一个名称作为销售方
+        # 模式6：找"销售方（名称）："格式
+        if not result["seller_name"]:
+            m = re.search(r'销售方\s*[（(]名称[）)]\s*[：:]\s*([^\n\r]+)', full_text)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式7：从销售方区域提取名称
+        if not result["seller_name"] and seller_section:
+            m = re.search(r'名称[：:]\s*([^\n\r]+)', seller_section)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式8：从销售方区域提取公司名
+        if not result["seller_name"] and seller_section:
+            m = re.search(r'([\u4e00-\u9fa5]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[\u4e00-\u9fa5]*)', seller_section)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式9：找"销售"关键字后面的公司名
+        if not result["seller_name"]:
+            m = re.search(r'销\s*售[^名]*?([\u4e00-\u9fa5]{2,}(?:有限公司|有限责任公司|集团|股份)[\u4e00-\u9fa5]*)', full_text)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式10：找"销售方"或"销方"后面直接跟的公司名（不经过"名称"）
+        if not result["seller_name"]:
+            m = re.search(r'(?:销售方|销方)[\s\n:：]*([^\n\r]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[^\n\r]*)', full_text)
+            if m:
+                result["seller_name"] = m.group(1).strip()
+        # 模式11：如果文本中有两个以上公司名，取最后一个作为销售方
+        if not result["seller_name"]:
+            all_names = re.findall(r'[\u4e00-\u9fa5]{2,}(?:有限公司|有限责任公司|集团|股份|合作社)[\u4e00-\u9fa5]*', full_text)
+            if all_names and len(all_names) >= 2:
+                result["seller_name"] = all_names[-1]
+            elif all_names and not result.get("buyer_name"):
+                result["seller_name"] = all_names[-1]
+        # 清理销售方名称：移除首尾空格和特殊字符，但保留中间空格
+        if result["seller_name"]:
+            result["seller_name"] = re.sub(r'^\s*[*●·、,，]\s*', '', result["seller_name"].strip())
+            result["seller_name"] = re.sub(r'\s*[*●·、,，]\s*$', '', result["seller_name"])
 
         # ── 金额/税额 ─────────────────────────────
-        m = re.search(r'合\s*计\s+[¥￥]?([\d,]+\.?\d*)\s+[¥￥]?([\d,]+\.?\d*)', full_text)
-        if m:
-            result["amount"] = m.group(1).replace(',', '')
-            result["tax_amount"] = m.group(2).replace(',', '')
+        # 辅助：提取带符号金额，返回 (绝对值字符串, 是否负数)
+        def _signed(v):
+            v = v.strip()
+            neg = False
+            if v.startswith('-'):
+                neg = True; v = v[1:]
+            elif v.startswith('(') and v.endswith(')'):
+                neg = True; v = v[1:-1]
+            return v.replace(',', ''), neg
 
-        m = re.search(r'\*[^*]+\*[^\n]+?(\d+%)\s+([\d,]+\.?\d*)', full_text)
+        def _set(field, raw_val, is_neg):
+            if not raw_val:
+                return
+            val, neg = _signed(raw_val)
+            if val and not result[field]:
+                result[field] = val
+            if neg:
+                result["is_red"] = True
+
+        # 模式1：找"合计"行的金额和税额（支持负数）
+        m = re.search(r'合\s*计\s+[¥￥]?(-?[\d,]+\.?\d*)\s+[¥￥]?(-?[\d,]+\.?\d*)', full_text)
+        if m:
+            _set("amount", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+            _set("tax_amount", m.group(2), '-' in m.group(2) or '(' in m.group(2))
+
+        # 模式2：找税率和对应税额
+        m = re.search(r'\*[^*]+\*[^\n]+?(\d+%)\s+(-?[\d,]+\.?\d*)', full_text)
         if m:
             result["tax_rate"] = m.group(1)
             if not result["tax_amount"]:
-                result["tax_amount"] = m.group(2).replace(',', '')
+                _set("tax_amount", m.group(2), '-' in m.group(2) or '(' in m.group(2))
         else:
             m = re.search(r'(?<![年月日\d])(\d{1,2}%)', full_text)
             if m:
                 result["tax_rate"] = m.group(1)
 
-        m = re.search(r'[（(]小写[)）]\s*[¥￥]?([\d,]+\.?\d*)', full_text)
+        # 模式3：找"小写"金额
+        m = re.search(r'[（(]小写[)）]\s*[¥￥]?(-?[\d,]+\.?\d*)', full_text)
         if m:
-            result["total"] = m.group(1).replace(',', '')
+            _set("total", m.group(1), '-' in m.group(1) or '(' in m.group(1))
 
+        # 模式4：兜底找金额（匹配"数量×单价"行）
         if not result["amount"]:
-            m = re.search(r'\*[^*]+\*[^\n]*?([\d,]+\.\d{2})\s+(\d+%)\s+([\d,]+\.\d{2})', full_text)
+            m = re.search(r'\*[^*]+\*[^\n]*?(-?[\d,]+\.\d{2})\s+(\d+%)\s+(-?[\d,]+\.\d{2})', full_text)
             if m:
-                result["amount"] = m.group(1).replace(',', '')
-                result["tax_rate"] = m.group(2)
-                result["tax_amount"] = m.group(3).replace(',', '')
+                _set("amount", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+                if not result["tax_rate"]: result["tax_rate"] = m.group(2)
+                _set("tax_amount", m.group(3), '-' in m.group(3) or '(' in m.group(3))
+
+        # 模式5：找"价税合计"行
+        if not result["total"]:
+            m = re.search(r'价\s*税\s*合\s*计\s*[¥￥]?(-?[\d,]+\.?\d*)', full_text)
+            if m:
+                _set("total", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+
+        # 模式6：找金额行（从税率后面取金额）
+        if not result["amount"]:
+            m = re.search(r'(-?[\d,]+\.\d{2})\s+' + (result["tax_rate"] or r'\d+%'), full_text)
+            if m:
+                _set("amount", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+
+        # 模式7：从表格中提取金额（匹配"金额"关键字）
+        if not result["amount"]:
+            m = re.search(r'金\s*额\s*[：:]\s*[¥￥]?(-?[\d,]+\.?\d*)', full_text)
+            if m:
+                _set("amount", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+
+        # 模式8：从"税"关键字后面提取税额
+        if not result["tax_amount"]:
+            m = re.search(r'税\s*[：:]\s*[¥￥]?(-?[\d,]+\.?\d*)', full_text)
+            if m:
+                _set("tax_amount", m.group(1), '-' in m.group(1) or '(' in m.group(1))
+
+        # 自动计算缺失值
+        if result["amount"] and result["tax_rate"] and not result["tax_amount"]:
+            try:
+                rate = float(result["tax_rate"].replace('%', '')) / 100
+                amount = float(result["amount"])
+                result["tax_amount"] = str(abs(round(amount * rate, 2)))
+            except:
+                pass
+
+        if result["amount"] and result["tax_amount"] and not result["total"]:
+            try:
+                result["total"] = str(abs(round(float(result["amount"]) + float(result["tax_amount"]), 2)))
+            except:
+                pass
+
+        # ── 红票/蓝票识别（基于文本关键字）──────────
+        if not result["is_red"]:
+            if re.search(r'红字|红冲|作废|负数|负\s*额|冲\s*红', full_text):
+                result["is_red"] = True
 
     except Exception as e:
         result["error"] = str(e)
@@ -182,15 +412,56 @@ class ParseWorker(QThread):
     progress = pyqtSignal(int)
     result_ready = pyqtSignal(dict)
     finished = pyqtSignal()
+    error_occurred = pyqtSignal(str)
 
-    def __init__(self, files):
+    def __init__(self, files, data_dir: str = ""):
         super().__init__()
-        self.files = files
+        self.files    = files
+        self.data_dir = data_dir   # 目标目录；非空时在后台完成文件复制
+        self._abort   = False
+
+    def abort(self):
+        self._abort = True
+
+    def _copy_pdf(self, src: str) -> str:
+        """在后台线程把 PDF 复制到 data_dir/invoices/，返回目标路径；失败返回原路径。"""
+        if not self.data_dir or not src or not os.path.isfile(src):
+            return src
+        invoices_dir = os.path.join(self.data_dir, "invoices")
+        os.makedirs(invoices_dir, exist_ok=True)
+        fname     = os.path.basename(src)
+        dest      = os.path.join(invoices_dir, fname)
+        counter   = 1
+        while os.path.exists(dest):
+            name, ext = os.path.splitext(fname)
+            dest = os.path.join(invoices_dir, f"{name}_{counter}{ext}")
+            counter += 1
+        try:
+            shutil.copy2(src, dest)
+            return dest
+        except Exception:
+            return src
 
     def run(self):
         total = len(self.files)
         for i, f in enumerate(self.files, 1):
-            data = parse_invoice_pdf(f)
+            if self._abort:
+                break
+            try:
+                data = parse_invoice_pdf(f)
+                # 文件复制在后台完成，主线程槽无需做 IO
+                data["pdf_path"] = self._copy_pdf(data.get("pdf_path", "") or f)
+            except Exception as e:
+                self.error_occurred.emit(f"解析 {os.path.basename(f)} 时出错: {str(e)}")
+                data = {
+                    "pdf_path": f,
+                    "error": str(e),
+                    "invoice_type": "", "buyer_name": "", "buyer_tax_id": "",
+                    "seller_name": "", "amount": "", "tax_rate": "",
+                    "tax_amount": "", "total": "", "invoice_no": "",
+                    "invoice_date": "", "company": "",
+                    "screenshots": [], "contracts": [], "remark": "", "is_red": False
+                }
             self.result_ready.emit(data)
             self.progress.emit(int(i / total * 100))
         self.finished.emit()
@@ -658,7 +929,7 @@ class SettingsDialog(QDialog):
 
         row_dir = QHBoxLayout()
         row_dir.setSpacing(6)
-        self.edit_data_dir = QLineEdit(self._app._base_dir)
+        self.edit_data_dir = QLineEdit(self._app._data_dir)
         self.edit_data_dir.setReadOnly(True)
         self.edit_data_dir.setFixedHeight(30)
         self.edit_data_dir.setStyleSheet(
@@ -726,7 +997,7 @@ class SettingsDialog(QDialog):
         """)
 
     def _browse_data_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择数据存储目录", self._app._base_dir)
+        d = QFileDialog.getExistingDirectory(self, "选择数据存储目录", self._app._data_dir)
         if d:
             self.edit_data_dir.setText(d)
 
@@ -735,16 +1006,29 @@ class SettingsDialog(QDialog):
         if not new_dir or not os.path.isdir(new_dir):
             QMessageBox.warning(self, "目录无效", "请先选择一个有效的目录。")
             return
-        if os.path.abspath(new_dir) == os.path.abspath(self._app._base_dir):
+        if os.path.abspath(new_dir) == os.path.abspath(self._app._data_dir):
             QMessageBox.information(self, "无需更改", "目标目录与当前目录相同。")
             return
+
+        # 统计旧目录中的文件数量
+        old_files_count = 0
+        if os.path.exists(self._app._data_file):
+            old_files_count += 1
+        if os.path.isdir(self._app._screenshot_dir):
+            old_files_count += len(os.listdir(self._app._screenshot_dir))
+        if os.path.isdir(self._app._contract_dir):
+            old_files_count += len(os.listdir(self._app._contract_dir))
+
+        migration_hint = ""
+        if old_files_count > 0:
+            migration_hint = f"\n\n📦 检测到旧目录有 {old_files_count} 个文件，将自动迁移到新目录。"
 
         reply = QMessageBox.question(
             self, "确认更改数据目录",
             f"确认将数据目录切换为：\n{new_dir}\n\n"
-            "⚠️ 旧目录中的文件不会自动迁移，请手动复制后再切换。\n"
+            f"✅ 新目录下的数据文件会自动加载。\n{migration_hint}"
             "软件将立即以新目录重新初始化。",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
         )
         if reply != QMessageBox.Yes:
             return
@@ -752,13 +1036,66 @@ class SettingsDialog(QDialog):
         # 先保存当前数据到旧路径
         self._app._save_data()
 
+        # 自动迁移旧目录文件
+        if old_files_count > 0:
+            old_data_file = self._app._data_file
+            old_screenshot_dir = self._app._screenshot_dir
+            old_contract_dir = self._app._contract_dir
+            
+            # 确保新目录结构存在
+            os.makedirs(new_dir, exist_ok=True)
+            os.makedirs(os.path.join(new_dir, "screenshots"), exist_ok=True)
+            os.makedirs(os.path.join(new_dir, "contracts"), exist_ok=True)
+            
+            errors = []
+            
+            # 迁移数据 JSON
+            if os.path.exists(old_data_file):
+                try:
+                    dst = os.path.join(new_dir, "invoices_data.json")
+                    shutil.copy2(old_data_file, dst)
+                except Exception as e:
+                    errors.append(f"invoices_data.json: {e}")
+            
+            # 迁移截图目录
+            if os.path.isdir(old_screenshot_dir):
+                for fname in os.listdir(old_screenshot_dir):
+                    src = os.path.join(old_screenshot_dir, fname)
+                    dst = os.path.join(new_dir, "screenshots", fname)
+                    try:
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                    except Exception as e:
+                        errors.append(f"screenshots/{fname}: {e}")
+            
+            # 迁移合同目录
+            if os.path.isdir(old_contract_dir):
+                for fname in os.listdir(old_contract_dir):
+                    src = os.path.join(old_contract_dir, fname)
+                    dst = os.path.join(new_dir, "contracts", fname)
+                    try:
+                        if os.path.isfile(src):
+                            shutil.copy2(src, dst)
+                    except Exception as e:
+                        errors.append(f"contracts/{fname}: {e}")
+            
+            if errors:
+                QMessageBox.warning(
+                    self, "部分文件迁移失败",
+                    "以下文件迁移失败：\n\n" + "\n".join(errors) +
+                    "\n\n请手动将旧目录文件复制到新目录。"
+                )
+
         # 切换目录
-        self._app._base_dir       = new_dir
+        self._app._data_dir       = new_dir
         self._app._data_file      = os.path.join(new_dir, "invoices_data.json")
         self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
         self._app._contract_dir   = os.path.join(new_dir, "contracts")
         os.makedirs(self._app._screenshot_dir, exist_ok=True)
         os.makedirs(self._app._contract_dir,   exist_ok=True)
+
+        # 保存配置（下次启动时自动使用此目录）
+        self._app._save_config_dir(new_dir)
 
         # 重新加载（新目录可能有历史数据）
         self._app.records.clear()
@@ -768,7 +1105,8 @@ class SettingsDialog(QDialog):
         QMessageBox.information(
             self, "已切换",
             f"数据目录已切换为：\n{new_dir}\n\n"
-            "如需迁移旧数据，请将旧目录下的 invoices_data.json、screenshots/ 和 contracts/ 复制到新目录。"
+            f"旧目录的文件已自动迁移到新目录。\n\n"
+            f"下次启动软件时将自动使用此目录。"
         )
 
     def _saveas_software(self):
@@ -946,8 +1284,15 @@ class InvoiceApp(QMainWindow):
         super().__init__()
         self.records = []
         self.pending_company = ""
-        self._base_dir       = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self._data_dir       = os.path.join(self._base_dir, "data")
+        
+        # 配置文件路径
+        self._config_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config.json"
+        )
+        
+        # 先读取配置文件获取数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
+        self._data_dir = self._load_config_dir()
         self._data_file      = os.path.join(self._data_dir, "invoices_data.json")
         self._screenshot_dir = os.path.join(self._data_dir, "screenshots")
         self._contract_dir   = os.path.join(self._data_dir, "contracts")
@@ -955,11 +1300,12 @@ class InvoiceApp(QMainWindow):
         os.makedirs(self._screenshot_dir, exist_ok=True)
         os.makedirs(self._contract_dir,   exist_ok=True)
 
-        self._filter_year  = None
-        self._filter_month = None
-        self._filter_inv_type = None   # 发票类型筛选
-        self._filter_seller   = None   # 销售方名称筛选
-        self._filter_company  = ""     # 企业号搜索（模糊匹配）
+        self._filter_year        = None
+        self._filter_month       = None
+        self._filter_inv_type    = None   # 发票类型筛选
+        self._filter_seller      = None   # 销售方名称筛选
+        self._filter_company     = ""     # 企业号搜索（模糊匹配）
+        self._filter_buyer       = ""     # 购买方名称/税号搜索（模糊匹配）
 
         # 拖拽模式：'pdf'=导入发票, 'screenshot'=添加截图, 'contract'=添加合同
         # 通过键盘修饰键区分：Alt=截图, Shift=合同, 无修饰=PDF
@@ -1070,6 +1416,16 @@ class InvoiceApp(QMainWindow):
         self.combo_seller.setFixedHeight(30)
         self.combo_seller.addItem("全部", None)
 
+        # 购买方名称/税号搜索
+        lbl_buyer_search = QLabel("购买方")
+        lbl_buyer_search.setStyleSheet("font-size:12px; color:#666;")
+        self.edit_buyer_search = QLineEdit()
+        self.edit_buyer_search.setPlaceholderText("名称或税号")
+        self.edit_buyer_search.setFixedWidth(160)
+        self.edit_buyer_search.setFixedHeight(30)
+        # 回车直接触发筛选
+        self.edit_buyer_search.returnPressed.connect(self._apply_filter)
+
         # 企业号搜索
         lbl_company_search = QLabel("企业号")
         lbl_company_search.setStyleSheet("font-size:12px; color:#666;")
@@ -1102,6 +1458,8 @@ class InvoiceApp(QMainWindow):
         filter_bar.addWidget(self.combo_inv_type)
         filter_bar.addWidget(lbl_seller)
         filter_bar.addWidget(self.combo_seller)
+        filter_bar.addWidget(lbl_buyer_search)
+        filter_bar.addWidget(self.edit_buyer_search)
         filter_bar.addWidget(lbl_company_search)
         filter_bar.addWidget(self.edit_company_search)
         filter_bar.addWidget(self.btn_filter)
@@ -1191,6 +1549,9 @@ class InvoiceApp(QMainWindow):
         self._set_global_style()
         self._save_locked = False
         self.table.cellChanged.connect(self._on_cell_changed)
+        self.table.clicked.connect(self._on_table_clicked)
+        # 安装 viewport 事件过滤器：点击已选中行取消选中
+        self.table.viewport().installEventFilter(self)
 
     def _stat_label(self, title, value):
         w = QWidget()
@@ -1293,6 +1654,7 @@ class InvoiceApp(QMainWindow):
         self._filter_month    = self.combo_month.currentData()
         self._filter_inv_type = self.combo_inv_type.currentData()
         self._filter_seller   = self.combo_seller.currentData()
+        self._filter_buyer    = self.edit_buyer_search.text().strip()
         self._filter_company  = self.edit_company_search.text().strip()
         self._rebuild_table()
         parts = []
@@ -1304,6 +1666,8 @@ class InvoiceApp(QMainWindow):
             parts.append(self._filter_inv_type)
         if self._filter_seller:
             parts.append(f"销售方:{self._filter_seller}")
+        if self._filter_buyer:
+            parts.append(f"购买方:{self._filter_buyer}")
         if self._filter_company:
             parts.append(f"企业号:{self._filter_company}")
         self.lbl_filter_hint.setText(f"当前筛选：{'  '.join(parts)}" if parts else "")
@@ -1313,11 +1677,13 @@ class InvoiceApp(QMainWindow):
         self._filter_month    = None
         self._filter_inv_type = None
         self._filter_seller   = None
+        self._filter_buyer    = ""
         self._filter_company  = ""
         self.combo_year.setCurrentIndex(0)
         self.combo_month.setCurrentIndex(0)
         self.combo_inv_type.setCurrentIndex(0)
         self.combo_seller.setCurrentIndex(0)
+        self.edit_buyer_search.clear()
         self.edit_company_search.clear()
         self.lbl_filter_hint.setText("")
         self._rebuild_table()
@@ -1341,6 +1707,13 @@ class InvoiceApp(QMainWindow):
         if self._filter_seller is not None:
             if rec.get("seller_name", "").strip() != self._filter_seller:
                 return False
+        # 购买方名称/税号模糊搜索（不区分大小写）
+        if self._filter_buyer:
+            buyer_name = rec.get("buyer_name", "").lower()
+            buyer_tax_id = rec.get("buyer_tax_id", "").lower()
+            search_text = self._filter_buyer.lower()
+            if search_text not in buyer_name and search_text not in buyer_tax_id:
+                return False
         # 企业号模糊搜索（不区分大小写）
         if self._filter_company:
             company = rec.get("company", "")
@@ -1350,10 +1723,12 @@ class InvoiceApp(QMainWindow):
 
     def _rebuild_table(self):
         self._save_locked = True
+        self.table.setUpdatesEnabled(False)   # 暂停 UI 重绘，批量插行时不卡顿
         self.table.setRowCount(0)
         shown = [r for r in self.records if self._record_matches_filter(r)]
         for data in shown:
-            self._insert_row(data)
+            self._insert_row(data, scroll=False)
+        self.table.setUpdatesEnabled(True)    # 恢复 UI，一次性刷新
         self._refresh_summary_from_list(shown)
         self._save_locked = False
         active = any([self._filter_year, self._filter_month,
@@ -1395,6 +1770,32 @@ class InvoiceApp(QMainWindow):
             if bk_item and bk_item.text() != "✓":
                 rec["remark"] = bk_item.text()
 
+    def _load_config_dir(self):
+        """从配置文件读取数据目录，如果配置不存在或无效则使用默认路径"""
+        default_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data"
+        )
+        if not os.path.exists(self._config_file):
+            return default_dir
+        try:
+            with open(self._config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                data_dir = config.get("data_dir", "")
+                if data_dir and os.path.isdir(data_dir):
+                    return data_dir
+        except Exception:
+            pass
+        return default_dir
+
+    def _save_config_dir(self, data_dir):
+        """保存数据目录到配置文件"""
+        try:
+            with open(self._config_file, "w", encoding="utf-8") as f:
+                json.dump({"data_dir": data_dir}, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def _load_data(self):
         if not os.path.exists(self._data_file):
             return
@@ -1404,6 +1805,7 @@ class InvoiceApp(QMainWindow):
             if not isinstance(self.records, list):
                 self.records = []
             self._save_locked = True
+            self.table.setUpdatesEnabled(False)
             for data in self.records:
                 data.setdefault("company", "")
                 data.setdefault("pdf_path", "")
@@ -1412,7 +1814,15 @@ class InvoiceApp(QMainWindow):
                 data.setdefault("screenshots", [])
                 data.setdefault("contracts", [])
                 data.setdefault("remark", "")
-                self._insert_row(data)
+                data.setdefault("is_red", False)
+                # 旧数据兼容：红票金额统一转负数
+                if data.get("is_red"):
+                    for f in ("amount", "tax_amount", "total"):
+                        v = data.get(f, "")
+                        if v and not str(v).startswith('-'):
+                            data[f] = '-' + str(v)
+                self._insert_row(data, scroll=False)
+            self.table.setUpdatesEnabled(True)
             self._refresh_summary()
             self._refresh_filter_combos()
             if self.records:
@@ -1420,6 +1830,7 @@ class InvoiceApp(QMainWindow):
             self._save_locked = False
         except Exception:
             self._save_locked = False
+            self.table.setUpdatesEnabled(True)
 
     # ── 拖拽支持 ────────────────────────────────
     def dragEnterEvent(self, e: QDragEnterEvent):
@@ -1472,6 +1883,22 @@ class InvoiceApp(QMainWindow):
     # ── 槽函数 ───────────────────────────────────
     def _on_company_changed(self, text):
         self.pending_company = text.strip()
+
+    def _on_table_clicked(self, index):
+        """点击表格行时，在状态栏显示当前行摘要信息"""
+        row = index.row()
+        try:
+            rec = self._get_record_by_row(row)
+            if rec:
+                seller = rec.get("seller_name", "") or "—"
+                date   = rec.get("invoice_date", "") or "—"
+                total  = rec.get("total", "") or "—"
+                self.status.showMessage(
+                    f"第 {row + 1} 行 | {seller} | {date} | 价税合计：¥{total}"
+                    "  ·  Ctrl+V 粘贴截图/合同"
+                )
+        except Exception:
+            pass
 
     def _on_cell_changed(self, row, col):
         if self._save_locked:
@@ -1561,24 +1988,76 @@ class InvoiceApp(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.status.showMessage(f"正在解析 {len(files)} 个文件...")
+        self._parse_errors = []
 
-        self._worker = ParseWorker(files)
+        # data_dir 传给 Worker，让文件复制在后台完成
+        self._worker = ParseWorker(files, data_dir=self._data_dir)
         self._worker.progress.connect(self.progress_bar.setValue)
-        self._worker.result_ready.connect(self._add_record)
+        self._worker.result_ready.connect(self._add_record_batch)
+        self._worker.error_occurred.connect(self._on_parse_error)
         self._worker.finished.connect(self._parse_done)
         self._worker.start()
 
-    def _add_record(self, data: dict):
-        # 优先使用手动输入的企业号，其次用文件名自动提取的企业号
+    def _on_parse_error(self, error_msg):
+        self._parse_errors.append(error_msg)
+        self.status.showMessage(f"解析错误: {error_msg}")
+
+    # ── 批量导入专用槽（纯内存操作，不碰 UI）────────────────
+    def _add_record_batch(self, data: dict):
+        """后台每解析完一条调此槽；只写 self.records，UI 留给 _parse_done 统一渲染。"""
         if self.pending_company:
             data["company"] = self.pending_company
-        # 文件名提取的企业号已在 parse_invoice_pdf 中写入 data["company"]
         data.setdefault("pdf_path", "")
         data.setdefault("invoice_type", "")
         data.setdefault("seller_name", "")
         data.setdefault("screenshots", [])
         data.setdefault("contracts", [])
         data.setdefault("remark", "")
+        data.setdefault("is_red", False)
+        # 红票金额统一存为负数，便于后续核对
+        if data.get("is_red"):
+            for f in ("amount", "tax_amount", "total"):
+                v = data.get(f, "")
+                if v and not str(v).startswith('-'):
+                    data[f] = '-' + str(v)
+        self.records.append(data)   # 只追加到列表，不插行、不刷新、不存文件
+
+    def _add_record(self, data: dict):
+        """单条记录添加（拖放/非批量场景），保留 save + refresh"""
+        if self.pending_company:
+            data["company"] = self.pending_company
+        data.setdefault("pdf_path", "")
+        data.setdefault("invoice_type", "")
+        data.setdefault("seller_name", "")
+        data.setdefault("screenshots", [])
+        data.setdefault("contracts", [])
+        data.setdefault("remark", "")
+        data.setdefault("is_red", False)
+        # 红票金额统一存为负数，便于后续核对
+        if data.get("is_red"):
+            for f in ("amount", "tax_amount", "total"):
+                v = data.get(f, "")
+                if v and not str(v).startswith('-'):
+                    data[f] = '-' + str(v)
+
+        # 复制 PDF 到数据目录
+        original_pdf_path = data.get("pdf_path", "")
+        if original_pdf_path and os.path.isfile(original_pdf_path):
+            invoices_dir = os.path.join(self._data_dir, "invoices")
+            os.makedirs(invoices_dir, exist_ok=True)
+            fname     = os.path.basename(original_pdf_path)
+            save_path = os.path.join(invoices_dir, fname)
+            counter = 1
+            while os.path.exists(save_path):
+                name, ext = os.path.splitext(fname)
+                save_path = os.path.join(invoices_dir, f"{name}_{counter}{ext}")
+                counter += 1
+            try:
+                shutil.copy2(original_pdf_path, save_path)
+                data["pdf_path"] = save_path
+            except Exception as e:
+                self.status.showMessage(f"警告：无法保存发票副本 - {fname}")
+
         self.records.append(data)
         if self._record_matches_filter(data):
             self._insert_row(data)
@@ -1586,44 +2065,70 @@ class InvoiceApp(QMainWindow):
         self._refresh_filter_combos()
         self._save_data()
 
-    def _insert_row(self, data: dict):
+    def _insert_row(self, data: dict, scroll: bool = True):
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setRowHeight(row, 36)
 
-        def cell(text, editable=False):
+        is_red = data.get("is_red", False)
+
+        def cell(text, editable=False, fg=None, bg=None):
             it = QTableWidgetItem(str(text) if text else "")
             if not editable:
                 it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            if fg:
+                it.setForeground(QColor(fg))
+            if bg:
+                it.setBackground(QColor(bg))
             return it
 
-        self.table.setItem(row, COL_IDX["序号"],         cell(row + 1))
+        # 红票整行浅红背景
+        row_bg = "#FFE4E4" if is_red else None
+
+        self.table.setItem(row, COL_IDX["序号"],         cell(row + 1, bg=row_bg))
         # 发票PDF列：显示文件名 + 查看按钮（内嵌 widget）
         self._set_invoice_pdf_cell(row, data)
-        self.table.setItem(row, COL_IDX["发票类型"],     cell(data.get("invoice_type", "")))
-        self.table.setItem(row, COL_IDX["购买方名称"],   cell(data.get("buyer_name", "")))
-        self.table.setItem(row, COL_IDX["纳税人识别号"],  cell(data.get("buyer_tax_id", "")))
-        self.table.setItem(row, COL_IDX["销售方名称"],   cell(data.get("seller_name", "")))
-        self.table.setItem(row, COL_IDX["金额(元)"],     cell(data.get("amount", "")))
-        self.table.setItem(row, COL_IDX["征收率"],       cell(data.get("tax_rate", "")))
-        self.table.setItem(row, COL_IDX["税额(元)"],     cell(data.get("tax_amount", "")))
-        self.table.setItem(row, COL_IDX["价税合计(元)"],  cell(data.get("total", "")))
-        self.table.setItem(row, COL_IDX["发票号码"],      cell(data.get("invoice_no", "")))
-        self.table.setItem(row, COL_IDX["开票日期"],      cell(data.get("invoice_date", "")))
-        self.table.setItem(row, COL_IDX["企业号"],        cell(data.get("company", ""), editable=True))
+
+        # 发票类型：红票显示"🔴 红票-类型"，蓝票显示"🔵 类型"
+        inv_type = data.get("invoice_type", "")
+        if is_red:
+            type_text = f"🔴 红票{'-' + inv_type if inv_type else ''}"
+            type_fg   = "#CC0000"
+        else:
+            type_text = f"🔵 {inv_type}" if inv_type else ""
+            type_fg   = "#1E6FBF"
+        type_item = cell(type_text, fg=type_fg, bg=row_bg)
+        self.table.setItem(row, COL_IDX["发票类型"], type_item)
+
+        # 金额列：负数标红（红票金额已在入库时转负）
+        def amount_cell(field):
+            v = data.get(field, "")
+            v = str(v) if v is not None else ""
+            neg = v.startswith('-')
+            return cell(v, fg="#CC0000" if neg else None, bg=row_bg if row_bg else ("#FFF0F0" if neg else None))
+
+        self.table.setItem(row, COL_IDX["购买方名称"],   cell(data.get("buyer_name", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["纳税人识别号"],  cell(data.get("buyer_tax_id", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["销售方名称"],   cell(data.get("seller_name", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["金额(元)"],     amount_cell("amount"))
+        self.table.setItem(row, COL_IDX["征收率"],       cell(data.get("tax_rate", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["税额(元)"],     amount_cell("tax_amount"))
+        self.table.setItem(row, COL_IDX["价税合计(元)"],  amount_cell("total"))
+        self.table.setItem(row, COL_IDX["发票号码"],      cell(data.get("invoice_no", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["开票日期"],      cell(data.get("invoice_date", ""), bg=row_bg))
+        self.table.setItem(row, COL_IDX["企业号"],        cell(data.get("company", ""), editable=True, bg=row_bg))
 
         self._set_screenshot_cell(row, data)
         self._set_contract_cell(row, data)
 
         remark_val  = data.get("remark", "") or data.get("error", "") or "✓"
-        remark_item = cell(remark_val, editable=True)
-        if data.get("error"):
-            remark_item.setForeground(QColor("#CC0000"))
-        else:
-            remark_item.setForeground(QColor("#1E8B1E") if remark_val == "✓" else QColor("#333"))
+        remark_item = cell(remark_val, editable=True,
+                           fg="#CC0000" if data.get("error") else ("#CC0000" if is_red else ("#1E8B1E" if remark_val == "✓" else "#333")),
+                           bg=row_bg)
         self.table.setItem(row, COL_IDX["备注"], remark_item)
 
-        self.table.scrollToBottom()
+        if scroll:
+            self.table.scrollToBottom()
 
     # ── 发票PDF单元格 ────────────────────────────
     def _set_invoice_pdf_cell(self, row, data):
@@ -1901,6 +2406,20 @@ class InvoiceApp(QMainWindow):
 
         self.status.showMessage("剪贴板中没有可用内容（图片或合同文件），请先复制后再粘贴")
 
+    # ── 点击同一行取消选中（viewport 事件过滤器）────
+    def eventFilter(self, obj, event):
+        if obj is self.table.viewport() and event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                row = self.table.rowAt(event.pos().y())
+                selected = self._selected_rows()
+                if row >= 0 and selected == [row]:
+                    # 再次点击同一已选中行 → 取消选中
+                    self.table.clearSelection()
+                    return True   # 消费事件，不再触发选中
+        return super().eventFilter(obj, event)
+
+
+
     # ── 右键菜单 ─────────────────────────────────
     def _show_context_menu(self, pos):
         menu = QMenu(self)
@@ -2044,13 +2563,22 @@ class InvoiceApp(QMainWindow):
         self.lbl_total_all._value_label.setText(f"¥ {total_all:,.2f}")
 
     def _parse_done(self):
+        # 所有记录已在 self.records，一次性重建表格（比逐行 insertRow 快得多）
+        self._rebuild_table()
+        self._refresh_filter_combos()
+        self._save_data()
+
         self.btn_open.setEnabled(True)
         self.progress_bar.setVisible(False)
+        # 统计本次新增（含错误标记的为失败）
+        batch_total = len(self.records)
         ok   = sum(1 for r in self.records if not r.get("error"))
-        fail = len(self.records) - ok
-        msg  = f"共解析 {len(self.records)} 张发票，成功 {ok} 张"
+        fail = batch_total - ok
+        msg  = f"导入完成：共 {batch_total} 张发票，成功识别 {ok} 张"
         if fail:
-            msg += f"，失败 {fail} 张（请查看备注列）"
+            msg += f"，{fail} 张解析异常（查看备注列）"
+        if self._parse_errors:
+            msg += f"  |  {len(self._parse_errors)} 个错误"
         self.status.showMessage(msg)
 
     # ── 导出 Excel ───────────────────────────────
