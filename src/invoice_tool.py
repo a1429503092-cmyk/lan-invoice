@@ -119,11 +119,9 @@ class InvoiceApp(QMainWindow):
         self.records = []
         self.pending_company = ""
         
-        # 配置文件路径
-        self._config_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "config.json"
-        )
+        # 配置文件路径：%APPDATA%\lan-invoice\config.json
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+        self._config_file = os.path.join(appdata, 'lan-invoice', 'config.json')
         
         # 先读取配置文件获取数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
         self._data_dir = self._load_config_dir()
@@ -630,6 +628,17 @@ class InvoiceApp(QMainWindow):
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "data"
         )
+        # 旧版配置迁移：项目根目录 config.json → %APPDATA%\lan-invoice\
+        old_config = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config.json"
+        )
+        if os.path.exists(old_config) and not os.path.exists(self._config_file):
+            try:
+                os.makedirs(os.path.dirname(self._config_file), exist_ok=True)
+                shutil.copy2(old_config, self._config_file)
+            except OSError:
+                pass
         if not os.path.exists(self._config_file):
             return default_dir
         try:
@@ -644,6 +653,7 @@ class InvoiceApp(QMainWindow):
 
     def _save_config_dir(self, data_dir):
         try:
+            os.makedirs(os.path.dirname(self._config_file), exist_ok=True)
             with open(self._config_file, "w", encoding="utf-8") as f:
                 json.dump({"data_dir": data_dir}, f, ensure_ascii=False, indent=2)
         except OSError:
