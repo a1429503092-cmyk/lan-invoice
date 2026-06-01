@@ -366,11 +366,19 @@ class InvoiceApp(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(36)
 
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        # 列宽：序号, 发票PDF, 发票类型, 购买方名称, 税号, 销售方名称, 金额, 税率, 税额, 合计, 发票号, 日期, 企业号, 截图, 合同, 备注
-        col_widths = [45, 160, 120, 150, 155, 150, 88, 55, 88, 98, 135, 100, 105, 90, 90, 100]
-        for i, w in enumerate(col_widths):
-            self.table.setColumnWidth(i, w)
+        header.setStretchLastSection(False)
+        # 固定列（像素宽度不变）：序号 金额 征收率 税额 价税合计 付款截图 合同
+        fixed_cols = {0: 45, 6: 88, 7: 55, 8: 88, 9: 98, 13: 90, 14: 90}
+        # 弹性列（最小宽度，剩余空间按比例分配）：
+        #   发票PDF 发票类型 购买方 税号 销售方 发票号 日期 企业号 备注
+        stretch_cols = {1: 120, 2: 100, 3: 130, 4: 130, 5: 130,
+                        10: 110, 11: 90, 12: 90, 15: 80}
+        for col, width in fixed_cols.items():
+            header.setSectionResizeMode(col, QHeaderView.Fixed)
+            self.table.setColumnWidth(col, width)
+        for col, width in stretch_cols.items():
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+            self.table.setColumnWidth(col, width)  # 初始宽度
 
         self.table.setStyleSheet("""
             QTableWidget { font-size:13px; gridline-color:#dce6f1; }
