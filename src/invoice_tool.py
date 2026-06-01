@@ -9,9 +9,7 @@ import os
 import re
 import json
 import shutil
-import subprocess
 from datetime import datetime
-from pathlib import Path
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -20,12 +18,11 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QHeaderView, QStatusBar, QFrame,
-    QProgressBar, QAbstractItemView, QDialog, QScrollArea,
-    QComboBox, QSizePolicy, QMenu, QAction, QListWidget, QListWidgetItem,
-    QSplitter, QInputDialog, QCheckBox
+    QProgressBar, QAbstractItemView, QDialog,
+    QComboBox, QMenu, QInputDialog
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QTimer, QMimeData, QUrl, QEvent
-from PyQt5.QtGui import QColor, QPixmap, QDragEnterEvent, QDropEvent, QIcon
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QUrl, QEvent
+from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent
 
 from invoice_parser import parse_invoice_pdf
 from dialogs import (ImageViewerDialog, InvoiceManagerDialog,
