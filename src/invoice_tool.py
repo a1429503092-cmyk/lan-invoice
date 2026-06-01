@@ -624,10 +624,7 @@ class InvoiceApp(QMainWindow):
                 rec["remark"] = bk_item.text()
 
     def _load_config_dir(self):
-        default_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data"
-        )
+        default_dir = os.path.join(os.path.dirname(self._config_file), "data")
         # 旧版配置迁移：项目根目录 config.json → %APPDATA%\lan-invoice\
         old_config = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
