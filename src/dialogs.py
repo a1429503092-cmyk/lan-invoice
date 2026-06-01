@@ -657,8 +657,8 @@ class SettingsDialog(QDialog):
         if not dst_dir:
             return
 
-        src_script = os.path.abspath(__file__)  # invoice_tool.py 所在绝对路径
-        src_base   = self._app._base_dir
+        src_base   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src_script = os.path.join(src_base, "src", "invoice_tool.py")
 
         # 计算要复制的内容
         items = []
