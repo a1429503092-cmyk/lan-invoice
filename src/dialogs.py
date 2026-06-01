@@ -727,3 +727,84 @@ class SettingsDialog(QDialog):
 # ─────────────────────────────────────────────
 #  删除确认对话框（双重保险：勾选后才能删除）
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  删除确认对话框（双重保险：勾选后才能删除）
+# ─────────────────────────────────────────────
+
+class DeleteConfirmDialog(QDialog):
+    """带勾选框的删除确认弹窗，必须勾选才可点击「确认删除」"""
+
+    def __init__(self, records: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚠️ 确认删除")
+        self.setMinimumWidth(560)
+        self._build_ui(records)
+
+    def _build_ui(self, records: list):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # 警告图标 + 标题
+        title = QLabel("⚠️ 即将永久删除以下发票记录，请仔细核对：")
+        title.setStyleSheet("font-size:14px; font-weight:bold; color:#CC0000;")
+        layout.addWidget(title)
+
+        # 发票列表
+        detail = QLabel()
+        lines = []
+        for r in records:
+            inv_date = r.get("invoice_date", "—")
+            inv_no   = r.get("invoice_no",   "无发票号")
+            seller   = r.get("seller_name",   "—")
+            total    = r.get("total",        "—")
+            fname    = r.get("file",          "未知文件")
+            lines.append(
+                f"📄 {fname}\n"
+                f"   发票号：{inv_no}   日期：{inv_date}\n"
+                f"   销售方：{seller}   合计：¥{total}"
+            )
+        detail.setText("\n\n".join(lines))
+        detail.setStyleSheet(
+            "background:#FFF3CD; border:1px solid #FFEAA7; "
+            "border-radius:6px; padding:10px 12px; "
+            "font-size:12px; color:#333; line-height:1.6;"
+        )
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+
+        # 危险提示
+        warn = QLabel("⚠️ 原始 PDF 文件将同步永久删除，无法恢复！")
+        warn.setStyleSheet("font-size:13px; font-weight:bold; color:#CC0000;")
+        layout.addWidget(warn)
+
+        # 勾选框（必须勾选）
+        self.cb = QCheckBox("我已确认上述信息，知晓删除后果，自愿删除")
+        self.cb.setStyleSheet("font-size:13px; font-weight:bold; color:#1A1A1A;")
+        self.cb.stateChanged.connect(self._on_check)
+        layout.addWidget(self.cb)
+
+        # 按钮行
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self.btn_ok = QPushButton("✅ 确认删除")
+        self.btn_ok.setEnabled(False)   # 默认禁用，必须勾选
+        self.btn_ok.setStyleSheet("""
+            QPushButton { background:#CC0000; color:white; border-radius:4px;
+                          font-size:13px; font-weight:bold; padding:7px 22px; }
+            QPushButton:enabled { background:#CC0000; }
+            QPushButton:!enabled { background:#AAAAAA; color:#666; }
+        """)
+        self.btn_ok.clicked.connect(self.accept)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.setStyleSheet(
+            "QPushButton { background:#F0F0F0; color:#333; border-radius:4px; "
+            "font-size:13px; padding:7px 18px; }"
+        )
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(self.btn_ok)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+    def _on_check(self, state):
+        self.btn_ok.setEnabled(state == Qt.Checked)
+
