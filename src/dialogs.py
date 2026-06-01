@@ -433,36 +433,27 @@ class SettingsDialog(QDialog):
     def __init__(self, app_ref, parent=None):
         super().__init__(parent)
         self._app = app_ref
-        self.setWindowTitle("⚙️ 设置")
-        self.resize(580, 440)
-        self.setMinimumSize(520, 380)
+        self.setWindowTitle("设置")
+        self.resize(480, 360)
+        self.setMinimumSize(420, 320)
         self._build_ui()
 
     # ── 辅助组件 ───────────────────────────────
 
-    def _make_card(self, bg: str, border: str) -> QFrame:
+    def _hline(self) -> QFrame:
         f = QFrame()
-        f.setStyleSheet(
-            f"QFrame {{ background:{bg}; border:1px solid {border}; border-radius:6px; }}")
+        f.setFrameShape(QFrame.HLine)
+        f.setStyleSheet("color:#ddd;")
         return f
 
-    def _card_title(self, text: str) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setStyleSheet("font-size:13px; font-weight:bold; color:#333;")
-        return lbl
+    def _stat_label(self, label: str, value: str) -> QLabel:
+        return QLabel(f"<span style='color:#888;font-size:11px;'>{label}</span> "
+                      f"<span style='color:#333;font-size:13px;font-weight:bold;'>{value}</span>")
 
-    def _stat_widget(self, label: str, value: str) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(1)
-        lt = QLabel(label)
-        lt.setStyleSheet("color:#666; font-size:10px;")
-        lv = QLabel(value)
-        lv.setStyleSheet("color:#1E6FBF; font-size:13px; font-weight:bold;")
-        v.addWidget(lt)
-        v.addWidget(lv)
-        return w
+    def _section_title(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-size:12px; font-weight:bold; color:#555;")
+        return lbl
 
     def _calc_data_size(self) -> str:
         data_dir = self._app._data_dir
@@ -484,136 +475,108 @@ class SettingsDialog(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 12)
+        layout.setSpacing(8)
 
-        # ── 标题 + 版本 ──────────────────────────
+        # ── 标题 ──────────────────────────────────
         title_row = QHBoxLayout()
-        lbl_title = QLabel("⚙️ 软件设置")
-        lbl_title.setStyleSheet("font-size:16px; font-weight:bold; color:#1E6FBF;")
+        lbl_title = QLabel("设置")
+        lbl_title.setStyleSheet("font-size:15px; font-weight:bold; color:#333;")
         title_row.addWidget(lbl_title)
         title_row.addStretch()
         lbl_ver = QLabel("v5.1")
-        lbl_ver.setStyleSheet("font-size:11px; color:#999;")
+        lbl_ver.setStyleSheet("font-size:11px; color:#aaa;")
         title_row.addWidget(lbl_ver)
         layout.addLayout(title_row)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color:#D0DCF0;")
-        layout.addWidget(sep)
+        layout.addWidget(self._hline())
 
-        # ── 1. 数据存储卡片 ──────────────────────
-        data_card = self._make_card("#F0F7FF", "#B8D4F0")
-        card_layout = QVBoxLayout(data_card)
-        card_layout.setContentsMargins(14, 10, 14, 10)
-        card_layout.setSpacing(6)
-
-        card_layout.addWidget(self._card_title("📁  数据存储"))
+        # ── 数据存储 ──────────────────────────────
+        layout.addWidget(self._section_title("📁 数据存储"))
 
         invoice_count = len(self._app.records)
         screenshots = sum(len(r.get("screenshots", [])) for r in self._app.records)
         contracts = sum(len(r.get("contracts", [])) for r in self._app.records)
         data_size = self._calc_data_size()
 
-        info_grid = QHBoxLayout()
-        info_grid.setSpacing(20)
-        info_grid.addWidget(self._stat_widget("发票记录", f"{invoice_count} 条"))
-        info_grid.addWidget(self._stat_widget("截图文件", f"{screenshots} 个"))
-        info_grid.addWidget(self._stat_widget("合同文件", f"{contracts} 个"))
-        info_grid.addWidget(self._stat_widget("数据大小", data_size))
-        info_grid.addStretch()
-        card_layout.addLayout(info_grid)
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(24)
+        stats_row.addWidget(self._stat_label("发票", f"{invoice_count} 条"))
+        stats_row.addWidget(self._stat_label("截图", f"{screenshots} 个"))
+        stats_row.addWidget(self._stat_label("合同", f"{contracts} 个"))
+        stats_row.addWidget(self._stat_label("大小", data_size))
+        stats_row.addStretch()
+        layout.addLayout(stats_row)
 
         path_row = QHBoxLayout()
         path_row.setSpacing(6)
         self.edit_data_dir = QLineEdit(self._app._data_dir)
         self.edit_data_dir.setReadOnly(True)
-        self.edit_data_dir.setFixedHeight(30)
+        self.edit_data_dir.setFixedHeight(28)
         self.edit_data_dir.setStyleSheet(
-            "background:#fff; border:1px solid #B0C4DE; border-radius:4px; padding:2px 6px;"
-            "font-family:Consolas,monospace; font-size:12px;")
+            "background:#fff; border:1px solid #ddd; border-radius:3px; "
+            "padding:2px 6px; font-size:11px;")
         btn_browse = QPushButton("浏览…")
-        btn_browse.setFixedHeight(30)
+        btn_browse.setFixedHeight(28)
         btn_browse.clicked.connect(self._browse_data_dir)
         path_row.addWidget(self.edit_data_dir, 1)
         path_row.addWidget(btn_browse)
-        card_layout.addLayout(path_row)
+        layout.addLayout(path_row)
 
-        btn_apply = QPushButton("✅ 应用新目录")
-        btn_apply.setFixedHeight(32)
-        btn_apply.setStyleSheet(
-            "background:#1E6FBF; color:white; font-weight:bold; border-radius:4px;")
+        btn_apply = QPushButton("应用新目录")
+        btn_apply.setFixedHeight(28)
         btn_apply.clicked.connect(self._apply_data_dir)
-        card_layout.addWidget(btn_apply)
+        layout.addWidget(btn_apply)
 
-        layout.addWidget(data_card)
+        layout.addWidget(self._hline())
 
-        # ── 2. 软件另存卡片 ──────────────────────
-        save_card = self._make_card("#F0FFF4", "#A8D8B0")
-        save_layout = QVBoxLayout(save_card)
-        save_layout.setContentsMargins(14, 10, 14, 10)
-        save_layout.setSpacing(6)
-
-        save_layout.addWidget(self._card_title("💾  软件另存（制作便携版）"))
+        # ── 软件另存 ──────────────────────────────
+        layout.addWidget(self._section_title("💾 软件另存（便携版）"))
         save_hint = QLabel(
-            "将主程序及全部数据（JSON、截图、合同、发票PDF）复制到目标文件夹，\n"
-            "复制后可直接运行，无需重新安装。"
+            "将软件及全部数据复制到目标文件夹，拷贝后可随身携带直接运行。"
         )
-        save_hint.setStyleSheet("font-size:11px; color:#777;")
+        save_hint.setStyleSheet("font-size:11px; color:#999;")
         save_hint.setWordWrap(True)
-        save_layout.addWidget(save_hint)
+        layout.addWidget(save_hint)
 
-        btn_saveas = QPushButton("📂 选择目标位置并另存软件")
-        btn_saveas.setFixedHeight(32)
-        btn_saveas.setStyleSheet(
-            "background:#2E7D32; color:white; font-weight:bold; border-radius:4px;")
+        btn_saveas = QPushButton("选择目录另存…")
+        btn_saveas.setFixedHeight(28)
         btn_saveas.clicked.connect(self._saveas_software)
-        save_layout.addWidget(btn_saveas)
+        layout.addWidget(btn_saveas)
 
-        layout.addWidget(save_card)
+        layout.addWidget(self._hline())
 
-        # ── 3. 备份与恢复卡片 ────────────────────
-        backup_card = self._make_card("#FFF5F0", "#E8C8B0")
-        backup_layout = QVBoxLayout(backup_card)
-        backup_layout.setContentsMargins(14, 10, 14, 10)
-        backup_layout.setSpacing(6)
-
-        backup_layout.addWidget(self._card_title("📦  数据备份与恢复"))
+        # ── 备份与恢复 ────────────────────────────
+        layout.addWidget(self._section_title("📦 数据备份与恢复"))
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        btn_backup = QPushButton("📤 备份当前数据")
-        btn_backup.setFixedHeight(32)
-        btn_backup.setStyleSheet(
-            "background:#E06020; color:white; font-weight:bold; border-radius:4px;")
+        btn_row.setSpacing(8)
+        btn_backup = QPushButton("备份数据…")
+        btn_backup.setFixedHeight(28)
         btn_backup.clicked.connect(self._backup_data)
-        btn_restore = QPushButton("📥 恢复数据…")
-        btn_restore.setFixedHeight(32)
-        btn_restore.setStyleSheet(
-            "background:#E06020; color:white; font-weight:bold; border-radius:4px;")
+        btn_restore = QPushButton("恢复数据…")
+        btn_restore.setFixedHeight(28)
         btn_restore.clicked.connect(self._restore_data)
         btn_row.addWidget(btn_backup)
         btn_row.addWidget(btn_restore)
-        backup_layout.addLayout(btn_row)
-
-        layout.addWidget(backup_card)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         layout.addStretch()
 
-        # ── 底部关闭 ──────────────────────────────
+        # ── 底部 ──────────────────────────────────
         btn_close = QPushButton("关闭")
-        btn_close.setFixedHeight(32)
+        btn_close.setFixedHeight(28)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close, alignment=Qt.AlignRight)
 
         self.setStyleSheet("""
-            QDialog { background:#F5F8FC; }
+            QDialog { background:#fff; }
             QPushButton {
-                border:1px solid #B0C4DE; border-radius:4px;
-                padding:4px 14px; background:#FFFFFF; font-size:13px;
+                border:1px solid #ccc; border-radius:3px;
+                padding:4px 14px; background:#fafafa; font-size:12px;
             }
-            QPushButton:hover { background:#E8F0FE; border-color:#1E6FBF; }
+            QPushButton:hover { background:#e8e8e8; border-color:#aaa; }
         """)
 
     # ── 数据目录操作 ────────────────────────────
