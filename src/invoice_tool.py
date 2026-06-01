@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QMenu, QInputDialog, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMimeData, QUrl, QEvent
-from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent
+from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
 
 from invoice_parser import parse_invoice_pdf
 from dialogs import (ImageViewerDialog, InvoiceManagerDialog,
@@ -1549,6 +1549,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("发票归档")
     app.setStyle("Fusion")
+    app.setFont(QFont("Microsoft YaHei", 9))
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
