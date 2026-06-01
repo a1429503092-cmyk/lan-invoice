@@ -196,6 +196,26 @@ class TestExtractInvoiceDate(unittest.TestCase):
         text = "前言不搭后语 2025年03月15日 更多内容"
         self.assertEqual(_extract_invoice_date(text), "2025年03月15日")
 
+    def test_slash_format(self):
+        """含开票日期关键字的斜杠格式"""
+        text = "开票日期：2024/11/30"
+        self.assertEqual(_extract_invoice_date(text), "2024年11月30日")
+
+    def test_dot_format(self):
+        """含开票日期关键字的点号格式"""
+        text = "开票日期：2024.11.30"
+        self.assertEqual(_extract_invoice_date(text), "2024年11月30日")
+
+    def test_date_keyword_dash(self):
+        """含日期关键字的横线格式"""
+        text = "日期：2024-11-30"
+        self.assertEqual(_extract_invoice_date(text), "2024年11月30日")
+
+    def test_fallback_dash(self):
+        """兜底：全文第一个横线日期"""
+        text = "内容 2025-06-15 其他"
+        self.assertEqual(_extract_invoice_date(text), "2025年06月15日")
+
     def test_no_date(self):
         self.assertEqual(_extract_invoice_date("无日期"), "")
 
@@ -230,6 +250,30 @@ class TestExtractBuyerInfo(unittest.TestCase):
 
     def test_tax_id_short_format(self):
         text = "纳税人识别号：91350700156534567X"
+        _, tax_id = _extract_buyer_info(text, "")
+        self.assertEqual(tax_id, "91350700156534567X")
+
+    def test_buyer_section_company_name(self):
+        """模式3：buyer_section 中提取公司名"""
+        section = "福建长富乳品有限公司"
+        name, _ = _extract_buyer_info("", section)
+        self.assertEqual(name, "福建长富乳品有限公司")
+
+    def test_buyer_prefix_second_pattern(self):
+        """模式4：购买方后面跟公司名"""
+        text = "购买方：福建长富乳品有限公司"
+        name, _ = _extract_buyer_info(text, "")
+        self.assertEqual(name, "福建长富乳品有限公司")
+
+    def test_tax_id_from_buyer_section(self):
+        """模式3：从购买方区域提取税号"""
+        section = "税号 91350700156534567X 其他"
+        _, tax_id = _extract_buyer_info("其他文字", section)
+        self.assertEqual(tax_id, "91350700156534567X")
+
+    def test_tax_id_buyer_prefix(self):
+        """模式4：购买方附近提取税号"""
+        text = "购买方信息 91350700156534567X 其他"
         _, tax_id = _extract_buyer_info(text, "")
         self.assertEqual(tax_id, "91350700156534567X")
 
@@ -269,6 +313,54 @@ class TestExtractSellerName(unittest.TestCase):
     def test_fallback_last_company(self):
         text = "福建长富乳品有限公司 北京京东世纪信息技术有限公司"
         result = _extract_seller_name(text, "", "福建长富乳品有限公司")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_xiaofang_name_format(self):
+        """模式2：销方名称：格式（带空格变体）"""
+        text = "销 方 名称：北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_xiao_mingcheng_format(self):
+        """模式3：销 名 称：分散字符格式"""
+        text = "销 名 称：北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_xiaohuofang_format(self):
+        """模式4：销货方：格式"""
+        text = "销货方：北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_seller_parens_name_format(self):
+        """模式6：销售方（名称）：格式"""
+        text = "销售方（名称）：北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_from_seller_section_company_pattern(self):
+        """模式8：销售方区域提取公司名"""
+        section = "某某信息\n福建长富乳品有限公司\n税号：123"
+        result = _extract_seller_name("", section, "")
+        self.assertEqual(result, "福建长富乳品有限公司")
+
+    def test_xiao_keyword_company_name(self):
+        """模式9：销售关键字后面的公司名"""
+        text = "销 售某某 北京京东世纪信息技术有限公司 备注"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_xiaofang_prefix_company_name(self):
+        """模式10：销售方后面直接跟公司名"""
+        text = "销售方 北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_single_company_as_seller(self):
+        """模式11兜底：只有一个公司名且无购买方时当作销售方"""
+        text = "北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
         self.assertEqual(result, "北京京东世纪信息技术有限公司")
 
 
@@ -355,6 +447,42 @@ class TestExtractFinancials(unittest.TestCase):
         result = {"amount": "550.00", "tax_rate": "", "tax_amount": "71.50", "total": "", "is_red": False}
         _extract_financials("无额外金额信息", result)
         self.assertEqual(result["total"], "621.5")
+
+    def test_quantity_price_line(self):
+        """模式4：数量×单价行"""
+        result = {"amount": "", "tax_rate": "", "tax_amount": "", "total": "", "is_red": False}
+        text = "*牛奶*100*5.50 100.00 13% 13.00"
+        _extract_financials(text, result)
+        self.assertEqual(result["amount"], "100.00")
+        self.assertEqual(result["tax_rate"], "13%")
+        self.assertEqual(result["tax_amount"], "13.00")
+
+    def test_amount_after_tax_rate(self):
+        """模式6：税率后面取金额"""
+        result = {"amount": "", "tax_rate": "13%", "tax_amount": "", "total": "", "is_red": False}
+        text = "550.00  13%"
+        _extract_financials(text, result)
+        self.assertEqual(result["amount"], "550.00")
+
+    def test_amount_keyword(self):
+        """模式7：金额关键字"""
+        result = {"amount": "", "tax_rate": "", "tax_amount": "", "total": "", "is_red": False}
+        text = "金额：¥550.00"
+        _extract_financials(text, result)
+        self.assertEqual(result["amount"], "550.00")
+
+    def test_tax_keyword(self):
+        """模式8：税关键字"""
+        result = {"amount": "", "tax_rate": "", "tax_amount": "", "total": "", "is_red": False}
+        text = "税：¥71.50"
+        _extract_financials(text, result)
+        self.assertEqual(result["tax_amount"], "71.50")
+
+    def test_no_auto_calc_when_rate_missing(self):
+        """税率缺失时不自动计算税额"""
+        result = {"amount": "550.00", "tax_rate": "", "tax_amount": "", "total": "", "is_red": False}
+        _extract_financials("", result)
+        self.assertEqual(result["tax_amount"], "")
 
 
 # ── _copy_file_to_dir 测试 ──────────────────
@@ -471,6 +599,183 @@ class TestParseInvoicePdfIntegration(unittest.TestCase):
             result = parse_invoice_pdf('/bad.pdf')
 
         self.assertIn("PDF损坏", result["error"])
+
+    def test_simplified_invoice_format(self):
+        """简化发票格式：无'电子发票'前缀，用号码/日期/销货方等简化字段"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = (
+            "增值税普通发票\n"
+            "号码：25011500000000000999\n"
+            "日期：2025年01月15日\n"
+            "名称：深圳市腾讯计算机系统有限公司\n"
+            "纳税人识别号：91440300708461136T\n"
+            "销货方：华为技术有限公司\n"
+            "金额：1,200.00\n"
+            "税率：6%\n"
+            "税：36.00\n"
+        )
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake/simple.pdf')
+
+        self.assertEqual(result["invoice_type"], "增值税普通发票")
+        self.assertEqual(result["invoice_no"], "25011500000000000999")
+        self.assertEqual(result["buyer_name"], "深圳市腾讯计算机系统有限公司")
+        self.assertEqual(result["seller_name"], "华为技术有限公司")
+        self.assertEqual(result["amount"], "1200.00")
+
+    def test_tongpiao_invoice(self):
+        """票通电子发票格式"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = (
+            "票通电子发票\n"
+            "发票号码：24113000000012345678\n"
+            "开票日期：2024年11月30日\n"
+            "名称：测试购方有限公司\n"
+            "统一社会信用代码/纳税人识别号：91350700156534567X\n"
+            "销售方名称：测试销方有限公司\n"
+            "合计  ¥880.00  ¥114.40\n"
+        )
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake/tongpiao.pdf')
+
+        self.assertEqual(result["invoice_type"], "票通发票")
+
+    def test_empty_pdf(self):
+        """扫描件/空白 PDF：无法提取文字"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = ""
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake/empty.pdf')
+
+        self.assertIn("无法提取文字内容", result["error"])
+
+    def test_red_keyword_detection(self):
+        """红票关键字识别（红冲/作废等）"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = (
+            "电子发票（增值税专用发票）\n"
+            "发票号码：24120100000000000002\n"
+            "开票日期：2024年12月01日\n"
+            "（红字冲红发票）\n"
+        )
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake/red_keyword.pdf')
+
+        self.assertTrue(result["is_red"])
+
+    def test_company_from_filename(self):
+        """文件名自动提取企业号"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "电子发票（普通发票）\n发票号码：12345678901234\n"
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake/14786-福建长富乳品有限公司.pdf')
+
+        self.assertEqual(result["file"], "14786-福建长富乳品有限公司.pdf")
+        self.assertEqual(result["company"], "14786")
+
+
+# ── _extract_pdf_text 测试 ────────────────────
+
+class TestExtractPdfText(unittest.TestCase):
+    def test_extract_text_only(self):
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import _extract_pdf_text
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "发票号码：12345678"
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            text = _extract_pdf_text('/fake.pdf')
+
+        self.assertIn("发票号码：12345678", text)
+
+    def test_extract_with_tables(self):
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import _extract_pdf_text
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "文字内容"
+        mock_page.extract_tables.return_value = [
+            [["项目", "金额"], ["牛奶", "100.00"]]
+        ]
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            text = _extract_pdf_text('/fake_tables.pdf')
+
+        self.assertIn("牛奶", text)
+        self.assertIn("100.00", text)
+
+    def test_extract_tables_error_graceful(self):
+        """表格提取异常时不应影响文字提取"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import _extract_pdf_text
+
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "文字内容"
+        mock_page.extract_tables.side_effect = Exception("表格解析失败")
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            text = _extract_pdf_text('/fake_bad_table.pdf')
+
+        self.assertIn("文字内容", text)
 
 
 if __name__ == "__main__":

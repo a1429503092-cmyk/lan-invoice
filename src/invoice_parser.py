@@ -145,7 +145,7 @@ def _extract_buyer_info(text: str, buyer_section: str) -> tuple[str, str]:
     if not name and buyer_section:
         m = re.search(_COMPANY_NAME_RE, buyer_section)
         if m:
-            name = m.group(1).strip()
+            name = m.group(0).strip()
 
     if not name:
         m = re.search(
@@ -212,7 +212,7 @@ def _extract_seller_name(text: str, seller_section: str, buyer_name: str) -> str
             return m.group(1).strip()
         m = re.search(_COMPANY_NAME_RE, seller_section)
         if m:
-            return m.group(1).strip()
+            return m.group(0).strip()
 
     # 销售方关键字 + 公司名
     m = re.search(r'销\s*售[^名]*?([一-龥]{2,}(?:有限公司|有限责任公司|集团|股份)[一-龥]*)', text)
