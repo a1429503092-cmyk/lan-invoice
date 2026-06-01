@@ -5,10 +5,12 @@ import os
 import shutil
 from datetime import datetime
 
+import zipfile
+
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QScrollArea, QFrame, QListWidget,
-    QListWidgetItem, QCheckBox
+    QListWidgetItem, QCheckBox, QWidget
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QColor
@@ -426,92 +428,141 @@ class ContractManagerDialog(QDialog):
 # ─────────────────────────────────────────────
 
 class SettingsDialog(QDialog):
-    """设置对话框：数据目录配置 + 软件另存"""
+    """设置对话框：数据目录配置 + 软件另存 + 数据备份恢复"""
 
     def __init__(self, app_ref, parent=None):
         super().__init__(parent)
-        self._app = app_ref  # InvoiceApp 实例
+        self._app = app_ref
         self.setWindowTitle("⚙️ 设置")
-        self.resize(560, 320)
-        self.setMinimumSize(480, 280)
+        self.resize(580, 440)
+        self.setMinimumSize(520, 380)
         self._build_ui()
+
+    # ── 辅助组件 ───────────────────────────────
+
+    def _make_card(self, bg: str, border: str) -> QFrame:
+        f = QFrame()
+        f.setStyleSheet(
+            f"QFrame {{ background:{bg}; border:1px solid {border}; border-radius:6px; }}")
+        return f
+
+    def _card_title(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-size:13px; font-weight:bold; color:#333;")
+        return lbl
+
+    def _stat_widget(self, label: str, value: str) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(1)
+        lt = QLabel(label)
+        lt.setStyleSheet("color:#666; font-size:10px;")
+        lv = QLabel(value)
+        lv.setStyleSheet("color:#1E6FBF; font-size:13px; font-weight:bold;")
+        v.addWidget(lt)
+        v.addWidget(lv)
+        return w
+
+    def _calc_data_size(self) -> str:
+        data_dir = self._app._data_dir
+        total = 0
+        if os.path.isdir(data_dir):
+            for dirpath, _, filenames in os.walk(data_dir):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    if os.path.isfile(fp):
+                        total += os.path.getsize(fp)
+        if total < 1024:
+            return f"{total} B"
+        elif total < 1024 * 1024:
+            return f"{total / 1024:.1f} KB"
+        else:
+            return f"{total / (1024 * 1024):.1f} MB"
+
+    # ── UI 构建 ─────────────────────────────────
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(14)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
 
-        # ── 标题 ──────────────────────────────────
+        # ── 标题 + 版本 ──────────────────────────
+        title_row = QHBoxLayout()
         lbl_title = QLabel("⚙️ 软件设置")
-        lbl_title.setStyleSheet("font-size:15px; font-weight:bold; color:#1E6FBF;")
-        layout.addWidget(lbl_title)
+        lbl_title.setStyleSheet("font-size:16px; font-weight:bold; color:#1E6FBF;")
+        title_row.addWidget(lbl_title)
+        title_row.addStretch()
+        lbl_ver = QLabel("v5.1")
+        lbl_ver.setStyleSheet("font-size:11px; color:#999;")
+        title_row.addWidget(lbl_ver)
+        layout.addLayout(title_row)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("color:#D0DCF0;")
         layout.addWidget(sep)
 
-        # ── 1. 数据目录设置 ───────────────────────
-        grp_data = QFrame()
-        grp_data.setStyleSheet(
-            "QFrame { background:#F0F7FF; border:1px solid #B8D4F0; border-radius:6px; }")
-        data_layout = QVBoxLayout(grp_data)
-        data_layout.setContentsMargins(14, 10, 14, 10)
-        data_layout.setSpacing(8)
+        # ── 1. 数据存储卡片 ──────────────────────
+        data_card = self._make_card("#F0F7FF", "#B8D4F0")
+        card_layout = QVBoxLayout(data_card)
+        card_layout.setContentsMargins(14, 10, 14, 10)
+        card_layout.setSpacing(6)
 
-        lbl_data_title = QLabel("📁  数据存储位置")
-        lbl_data_title.setStyleSheet("font-size:13px; font-weight:bold; color:#333;")
-        data_layout.addWidget(lbl_data_title)
+        card_layout.addWidget(self._card_title("📁  数据存储"))
 
-        lbl_hint = QLabel("软件的数据文件（JSON）、截图、合同将保存在此目录下。\n"
-                          "⚠️ 更改目录后，旧目录中的文件不会自动迁移，请手动复制。")
-        lbl_hint.setStyleSheet("font-size:11px; color:#777;")
-        lbl_hint.setWordWrap(True)
-        data_layout.addWidget(lbl_hint)
+        invoice_count = len(self._app.records)
+        screenshots = sum(len(r.get("screenshots", [])) for r in self._app.records)
+        contracts = sum(len(r.get("contracts", [])) for r in self._app.records)
+        data_size = self._calc_data_size()
 
-        row_dir = QHBoxLayout()
-        row_dir.setSpacing(6)
+        info_grid = QHBoxLayout()
+        info_grid.setSpacing(20)
+        info_grid.addWidget(self._stat_widget("发票记录", f"{invoice_count} 条"))
+        info_grid.addWidget(self._stat_widget("截图文件", f"{screenshots} 个"))
+        info_grid.addWidget(self._stat_widget("合同文件", f"{contracts} 个"))
+        info_grid.addWidget(self._stat_widget("数据大小", data_size))
+        info_grid.addStretch()
+        card_layout.addLayout(info_grid)
+
+        path_row = QHBoxLayout()
+        path_row.setSpacing(6)
         self.edit_data_dir = QLineEdit(self._app._data_dir)
         self.edit_data_dir.setReadOnly(True)
         self.edit_data_dir.setFixedHeight(30)
         self.edit_data_dir.setStyleSheet(
-            "background:#fff; border:1px solid #B0C4DE; border-radius:4px; padding:2px 6px;")
+            "background:#fff; border:1px solid #B0C4DE; border-radius:4px; padding:2px 6px;"
+            "font-family:Consolas,monospace; font-size:12px;")
         btn_browse = QPushButton("浏览…")
         btn_browse.setFixedHeight(30)
-        btn_browse.setFixedWidth(70)
         btn_browse.clicked.connect(self._browse_data_dir)
-        row_dir.addWidget(self.edit_data_dir, 1)
-        row_dir.addWidget(btn_browse)
-        data_layout.addLayout(row_dir)
+        path_row.addWidget(self.edit_data_dir, 1)
+        path_row.addWidget(btn_browse)
+        card_layout.addLayout(path_row)
 
-        btn_apply_dir = QPushButton("✅ 应用新目录")
-        btn_apply_dir.setFixedHeight(32)
-        btn_apply_dir.setStyleSheet(
+        btn_apply = QPushButton("✅ 应用新目录")
+        btn_apply.setFixedHeight(32)
+        btn_apply.setStyleSheet(
             "background:#1E6FBF; color:white; font-weight:bold; border-radius:4px;")
-        btn_apply_dir.clicked.connect(self._apply_data_dir)
-        data_layout.addWidget(btn_apply_dir)
+        btn_apply.clicked.connect(self._apply_data_dir)
+        card_layout.addWidget(btn_apply)
 
-        layout.addWidget(grp_data)
+        layout.addWidget(data_card)
 
-        # ── 2. 软件另存 ───────────────────────────
-        grp_save = QFrame()
-        grp_save.setStyleSheet(
-            "QFrame { background:#F0FFF4; border:1px solid #A8D8B0; border-radius:6px; }")
-        save_layout = QVBoxLayout(grp_save)
+        # ── 2. 软件另存卡片 ──────────────────────
+        save_card = self._make_card("#F0FFF4", "#A8D8B0")
+        save_layout = QVBoxLayout(save_card)
         save_layout.setContentsMargins(14, 10, 14, 10)
         save_layout.setSpacing(6)
 
-        lbl_save_title = QLabel("💾  软件另存（制作便携版）")
-        lbl_save_title.setStyleSheet("font-size:13px; font-weight:bold; color:#2E7D32;")
-        save_layout.addWidget(lbl_save_title)
-
-        lbl_save_hint = QLabel(
-            "将软件主程序（invoice_tool.py）及当前所有数据（JSON、截图、合同）\n"
-            "复制到您选择的目标文件夹，复制后直接运行即可，无需重新安装。"
+        save_layout.addWidget(self._card_title("💾  软件另存（制作便携版）"))
+        save_hint = QLabel(
+            "将主程序及全部数据（JSON、截图、合同、发票PDF）复制到目标文件夹，\n"
+            "复制后可直接运行，无需重新安装。"
         )
-        lbl_save_hint.setStyleSheet("font-size:11px; color:#777;")
-        lbl_save_hint.setWordWrap(True)
-        save_layout.addWidget(lbl_save_hint)
+        save_hint.setStyleSheet("font-size:11px; color:#777;")
+        save_hint.setWordWrap(True)
+        save_layout.addWidget(save_hint)
 
         btn_saveas = QPushButton("📂 选择目标位置并另存软件")
         btn_saveas.setFixedHeight(32)
@@ -520,7 +571,34 @@ class SettingsDialog(QDialog):
         btn_saveas.clicked.connect(self._saveas_software)
         save_layout.addWidget(btn_saveas)
 
-        layout.addWidget(grp_save)
+        layout.addWidget(save_card)
+
+        # ── 3. 备份与恢复卡片 ────────────────────
+        backup_card = self._make_card("#FFF5F0", "#E8C8B0")
+        backup_layout = QVBoxLayout(backup_card)
+        backup_layout.setContentsMargins(14, 10, 14, 10)
+        backup_layout.setSpacing(6)
+
+        backup_layout.addWidget(self._card_title("📦  数据备份与恢复"))
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_backup = QPushButton("📤 备份当前数据")
+        btn_backup.setFixedHeight(32)
+        btn_backup.setStyleSheet(
+            "background:#E06020; color:white; font-weight:bold; border-radius:4px;")
+        btn_backup.clicked.connect(self._backup_data)
+        btn_restore = QPushButton("📥 恢复数据…")
+        btn_restore.setFixedHeight(32)
+        btn_restore.setStyleSheet(
+            "background:#E06020; color:white; font-weight:bold; border-radius:4px;")
+        btn_restore.clicked.connect(self._restore_data)
+        btn_row.addWidget(btn_backup)
+        btn_row.addWidget(btn_restore)
+        backup_layout.addLayout(btn_row)
+
+        layout.addWidget(backup_card)
+
         layout.addStretch()
 
         # ── 底部关闭 ──────────────────────────────
@@ -538,6 +616,8 @@ class SettingsDialog(QDialog):
             QPushButton:hover { background:#E8F0FE; border-color:#1E6FBF; }
         """)
 
+    # ── 数据目录操作 ────────────────────────────
+
     def _browse_data_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择数据存储目录", self._app._data_dir)
         if d:
@@ -552,7 +632,6 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "无需更改", "目标目录与当前目录相同。")
             return
 
-        # 统计旧目录中的文件数量
         old_files_count = 0
         if os.path.exists(self._app._data_file):
             old_files_count += 1
@@ -575,31 +654,21 @@ class SettingsDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
 
-        # 先保存当前数据到旧路径
         self._app._save_data()
 
-        # 自动迁移旧目录文件
         if old_files_count > 0:
-            old_data_file = self._app._data_file
-            old_screenshot_dir = self._app._screenshot_dir
-            old_contract_dir = self._app._contract_dir
-            
-            # 确保新目录结构存在
             os.makedirs(new_dir, exist_ok=True)
             os.makedirs(os.path.join(new_dir, "screenshots"), exist_ok=True)
             os.makedirs(os.path.join(new_dir, "contracts"), exist_ok=True)
-            
             errors = []
-            
-            # 迁移数据 JSON
+            old_data_file = self._app._data_file
+            old_screenshot_dir = self._app._screenshot_dir
+            old_contract_dir = self._app._contract_dir
             if os.path.exists(old_data_file):
                 try:
-                    dst = os.path.join(new_dir, "invoices_data.json")
-                    shutil.copy2(old_data_file, dst)
+                    shutil.copy2(old_data_file, os.path.join(new_dir, "invoices_data.json"))
                 except Exception as e:
                     errors.append(f"invoices_data.json: {e}")
-            
-            # 迁移截图目录
             if os.path.isdir(old_screenshot_dir):
                 for fname in os.listdir(old_screenshot_dir):
                     src = os.path.join(old_screenshot_dir, fname)
@@ -609,8 +678,6 @@ class SettingsDialog(QDialog):
                             shutil.copy2(src, dst)
                     except Exception as e:
                         errors.append(f"screenshots/{fname}: {e}")
-            
-            # 迁移合同目录
             if os.path.isdir(old_contract_dir):
                 for fname in os.listdir(old_contract_dir):
                     src = os.path.join(old_contract_dir, fname)
@@ -620,7 +687,6 @@ class SettingsDialog(QDialog):
                             shutil.copy2(src, dst)
                     except Exception as e:
                         errors.append(f"contracts/{fname}: {e}")
-            
             if errors:
                 QMessageBox.warning(
                     self, "部分文件迁移失败",
@@ -628,18 +694,15 @@ class SettingsDialog(QDialog):
                     "\n\n请手动将旧目录文件复制到新目录。"
                 )
 
-        # 切换目录
-        self._app._data_dir       = new_dir
-        self._app._data_file      = os.path.join(new_dir, "invoices_data.json")
+        self._app._data_dir = new_dir
+        self._app._data_file = os.path.join(new_dir, "invoices_data.json")
         self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
-        self._app._contract_dir   = os.path.join(new_dir, "contracts")
+        self._app._contract_dir = os.path.join(new_dir, "contracts")
         os.makedirs(self._app._screenshot_dir, exist_ok=True)
-        os.makedirs(self._app._contract_dir,   exist_ok=True)
+        os.makedirs(self._app._contract_dir, exist_ok=True)
 
-        # 保存配置（下次启动时自动使用此目录）
         self._app._save_config_dir(new_dir)
 
-        # 重新加载（新目录可能有历史数据）
         self._app.records.clear()
         self._app.table.setRowCount(0)
         self._app._load_data()
@@ -651,35 +714,29 @@ class SettingsDialog(QDialog):
             f"下次启动软件时将自动使用此目录。"
         )
 
+    # ── 软件另存 ────────────────────────────────
+
     def _saveas_software(self):
-        """将软件及数据整体复制到目标文件夹（便携版）"""
         dst_dir = QFileDialog.getExistingDirectory(self, "选择软件保存目录")
         if not dst_dir:
             return
 
-        src_base   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src_base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         src_script = os.path.join(src_base, "src", "invoice_tool.py")
 
-        # 计算要复制的内容
         items = []
-        # 主程序脚本
         if os.path.exists(src_script):
             items.append(("file", src_script, os.path.join(dst_dir, os.path.basename(src_script))))
-        # requirements.txt（如果存在）
         req_src = os.path.join(src_base, "requirements.txt")
         if os.path.exists(req_src):
             items.append(("file", req_src, os.path.join(dst_dir, "requirements.txt")))
-        # 启动批处理（如果存在）
         bat_src = os.path.join(src_base, "启动.bat")
         if os.path.exists(bat_src):
             items.append(("file", bat_src, os.path.join(dst_dir, "启动.bat")))
-        # 数据 JSON
         if os.path.exists(self._app._data_file):
             items.append(("file", self._app._data_file, os.path.join(dst_dir, "invoices_data.json")))
-        # screenshots 目录
         if os.path.isdir(self._app._screenshot_dir):
             items.append(("dir", self._app._screenshot_dir, os.path.join(dst_dir, "screenshots")))
-        # contracts 目录
         if os.path.isdir(self._app._contract_dir):
             items.append(("dir", self._app._contract_dir, os.path.join(dst_dir, "contracts")))
 
@@ -710,7 +767,7 @@ class SettingsDialog(QDialog):
 
         if errors:
             QMessageBox.warning(self, "部分文件复制失败",
-                "以下文件复制失败：\n\n" + "\n".join(errors))
+                                "以下文件复制失败：\n\n" + "\n".join(errors))
         else:
             QMessageBox.information(
                 self, "另存成功",
@@ -722,6 +779,63 @@ class SettingsDialog(QDialog):
                 os.startfile(dst_dir)
             except Exception:
                 pass
+
+    # ── 数据备份与恢复 ──────────────────────────
+
+    def _backup_data(self):
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"invoice_backup_{ts}.zip"
+        dst, _ = QFileDialog.getSaveFileName(
+            self, "选择备份保存位置", default_name, "ZIP 文件 (*.zip)"
+        )
+        if not dst:
+            return
+        try:
+            data_dir = self._app._data_dir
+            with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for dirpath, _, filenames in os.walk(data_dir):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        arcname = os.path.relpath(fp, data_dir)
+                        zf.write(fp, arcname)
+            size_mb = os.path.getsize(dst) / (1024 * 1024)
+            QMessageBox.information(
+                self, "备份成功",
+                f"数据已备份到：\n{dst}\n\n备份大小：{size_mb:.1f} MB"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "备份失败", f"备份时出错：\n{e}")
+
+    def _restore_data(self):
+        src, _ = QFileDialog.getOpenFileName(
+            self, "选择备份文件", "", "ZIP 文件 (*.zip)"
+        )
+        if not src:
+            return
+        reply = QMessageBox.question(
+            self, "⚠️ 确认恢复",
+            f"此操作将用备份文件内容替换当前所有数据，\n"
+            f"现有数据将被覆盖且无法恢复！\n\n"
+            f"备份文件：{os.path.basename(src)}\n\n"
+            f"确认恢复？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            data_dir = self._app._data_dir
+            with zipfile.ZipFile(src, 'r') as zf:
+                zf.extractall(data_dir)
+            self._app.records.clear()
+            self._app.table.setRowCount(0)
+            self._app._load_data()
+            QMessageBox.information(
+                self, "恢复成功",
+                f"数据已从备份恢复。\n当前记录数：{len(self._app.records)} 条"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "恢复失败", f"恢复时出错：\n{e}")
 
 
 # ─────────────────────────────────────────────
