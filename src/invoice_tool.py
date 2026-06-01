@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QHeaderView, QStatusBar, QFrame,
     QProgressBar, QAbstractItemView, QDialog,
-    QComboBox, QMenu, QInputDialog
+    QComboBox, QMenu, QInputDialog, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent
@@ -217,7 +217,7 @@ class InvoiceApp(QMainWindow):
         lbl.setFixedWidth(110)
         self.edit_company = QLineEdit()
         self.edit_company.setPlaceholderText("输入后新导入发票自动填入")
-        self.edit_company.setFixedWidth(220)
+        self.edit_company.setMinimumWidth(120)
         self.edit_company.setFixedHeight(32)
         self.edit_company.textChanged.connect(self._on_company_changed)
 
@@ -226,7 +226,7 @@ class InvoiceApp(QMainWindow):
         self.btn_apply.clicked.connect(self.apply_company_to_selected)
 
         top_bar.addWidget(lbl)
-        top_bar.addWidget(self.edit_company)
+        top_bar.addWidget(self.edit_company, 1)
         top_bar.addWidget(self.btn_apply)
         top_bar.addSpacing(12)
         top_bar.addWidget(self.btn_export)
@@ -261,16 +261,18 @@ class InvoiceApp(QMainWindow):
         lbl_type = QLabel("发票类型")
         lbl_type.setStyleSheet("font-size:12px; color:#666;")
         self.combo_inv_type = QComboBox()
-        self.combo_inv_type.setFixedWidth(130)
+        self.combo_inv_type.setMinimumWidth(100)
         self.combo_inv_type.setFixedHeight(30)
+        self.combo_inv_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_inv_type.addItem("全部", None)
 
         # 销售方名称
         lbl_seller = QLabel("销售方")
         lbl_seller.setStyleSheet("font-size:12px; color:#666;")
         self.combo_seller = QComboBox()
-        self.combo_seller.setFixedWidth(160)
+        self.combo_seller.setMinimumWidth(120)
         self.combo_seller.setFixedHeight(30)
+        self.combo_seller.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_seller.addItem("全部", None)
 
         # 购买方名称/税号搜索
@@ -278,7 +280,7 @@ class InvoiceApp(QMainWindow):
         lbl_buyer_search.setStyleSheet("font-size:12px; color:#666;")
         self.edit_buyer_search = QLineEdit()
         self.edit_buyer_search.setPlaceholderText("名称或税号")
-        self.edit_buyer_search.setFixedWidth(160)
+        self.edit_buyer_search.setMinimumWidth(120)
         self.edit_buyer_search.setFixedHeight(30)
         # 回车直接触发筛选
         self.edit_buyer_search.returnPressed.connect(self._apply_filter)
@@ -288,7 +290,7 @@ class InvoiceApp(QMainWindow):
         lbl_company_search.setStyleSheet("font-size:12px; color:#666;")
         self.edit_company_search = QLineEdit()
         self.edit_company_search.setPlaceholderText("输入企业号搜索")
-        self.edit_company_search.setFixedWidth(130)
+        self.edit_company_search.setMinimumWidth(100)
         self.edit_company_search.setFixedHeight(30)
         # 回车直接触发筛选
         self.edit_company_search.returnPressed.connect(self._apply_filter)
@@ -312,13 +314,13 @@ class InvoiceApp(QMainWindow):
         filter_bar.addWidget(lbl_m)
         filter_bar.addWidget(self.combo_month)
         filter_bar.addWidget(lbl_type)
-        filter_bar.addWidget(self.combo_inv_type)
+        filter_bar.addWidget(self.combo_inv_type, 1)
         filter_bar.addWidget(lbl_seller)
-        filter_bar.addWidget(self.combo_seller)
+        filter_bar.addWidget(self.combo_seller, 1)
         filter_bar.addWidget(lbl_buyer_search)
-        filter_bar.addWidget(self.edit_buyer_search)
+        filter_bar.addWidget(self.edit_buyer_search, 2)
         filter_bar.addWidget(lbl_company_search)
-        filter_bar.addWidget(self.edit_company_search)
+        filter_bar.addWidget(self.edit_company_search, 2)
         filter_bar.addWidget(self.btn_filter)
         filter_bar.addWidget(self.btn_reset)
         filter_bar.addWidget(self.lbl_filter_hint)
@@ -377,8 +379,31 @@ class InvoiceApp(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
         for col, width in stretch_cols.items():
-            header.setSectionResizeMode(col, QHeaderView.Stretch)
+            header.setSectionResizeMode(col, QHeaderView.Interactive)
             self.table.setColumnWidth(col, width)  # 初始宽度
+
+        # 弹性列按初始宽度等比分配（setStretchFactor 在 Qt 5 不可用，改用自定义分摊）
+        stretch_factors = {1: 12, 2: 10, 3: 13, 4: 13, 5: 13,
+                           10: 11, 11: 9, 12: 9, 15: 8}
+        total_weight = sum(stretch_factors.values())
+
+        def _resize_stretch_cols():
+            """当表格宽度变化时，按 stretch_factors 等比分配可用空间"""
+            available = self.table.viewport().width()
+            fixed_total = sum(self.table.columnWidth(c) for c in fixed_cols)
+            free = available - fixed_total
+            if free <= 0:
+                return
+            for col, w in stretch_cols.items():
+                factor = stretch_factors.get(col, 1)
+                self.table.setColumnWidth(col, max(w, int(free * factor / total_weight)))
+
+        # 拦截表格 resizeEvent 实现等比分配
+        self._table_resize_orig = self.table.resizeEvent
+        def _on_table_resize(event):
+            self._table_resize_orig(event)
+            _resize_stretch_cols()
+        self.table.resizeEvent = _on_table_resize
 
         self.table.setStyleSheet("""
             QTableWidget { font-size:13px; gridline-color:#dce6f1; }
