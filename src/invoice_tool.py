@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QProgressBar, QAbstractItemView, QDialog,
     QComboBox, QMenu, QInputDialog, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMimeData, QUrl, QEvent
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent
 
 from invoice_parser import parse_invoice_pdf
@@ -382,27 +382,37 @@ class InvoiceApp(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.Interactive)
             self.table.setColumnWidth(col, width)  # 初始宽度
 
-        # 弹性列按初始宽度等比分配（setStretchFactor 在 Qt 5 不可用，改用自定义分摊）
-        stretch_factors = {1: 12, 2: 10, 3: 13, 4: 13, 5: 13,
-                           10: 11, 11: 9, 12: 9, 15: 8}
+        # 弹性列按初始宽度等比分配（Qt 5 无 setStretchFactor，用 resizeEvent 实现）
+        stretch_factors = {col: w // 10 for col, w in stretch_cols.items()}
         total_weight = sum(stretch_factors.values())
+        fixed_total_cache = sum(fixed_cols.values())
 
         def _resize_stretch_cols():
-            """当表格宽度变化时，按 stretch_factors 等比分配可用空间"""
             available = self.table.viewport().width()
-            fixed_total = sum(self.table.columnWidth(c) for c in fixed_cols)
-            free = available - fixed_total
+            free = available - fixed_total_cache
             if free <= 0:
                 return
-            for col, w in stretch_cols.items():
-                factor = stretch_factors.get(col, 1)
-                self.table.setColumnWidth(col, max(w, int(free * factor / total_weight)))
+            # 最大余数法：避免取整误差累积导致右侧空白
+            raw = {}
+            remainders = []
+            for col, min_w in stretch_cols.items():
+                exact = free * stretch_factors[col] / total_weight
+                raw[col] = max(min_w, int(exact))
+                remainders.append((col, exact - int(exact)))
+            remainders.sort(key=lambda x: x[1], reverse=True)
+            for i in range(free - sum(raw.values())):
+                raw[remainders[i][0]] += 1
+            for col, w in raw.items():
+                self.table.setColumnWidth(col, w)
 
-        # 拦截表格 resizeEvent 实现等比分配
+        self._resize_timer = QTimer(self.table)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(_resize_stretch_cols)
+
         self._table_resize_orig = self.table.resizeEvent
         def _on_table_resize(event):
             self._table_resize_orig(event)
-            _resize_stretch_cols()
+            self._resize_timer.start(80)
         self.table.resizeEvent = _on_table_resize
 
         self.table.setStyleSheet("""
