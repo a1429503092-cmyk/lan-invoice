@@ -27,80 +27,11 @@ from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
 from invoice_parser import parse_invoice_pdf
 from dialogs import (ImageViewerDialog, InvoiceManagerDialog,
                      ContractManagerDialog, SettingsDialog, DeleteConfirmDialog)
+from worker import ParseWorker
+from utils import copy_file_to_dir as _copy_file_to_dir
+from filters import (record_matches_filter, get_available_years,
+                     get_available_inv_types, get_available_sellers)
 
-
-# ─────────────────────────────────────────────
-#  工具函数
-# ─────────────────────────────────────────────
-
-def _copy_file_to_dir(src: str, dst_dir: str) -> str:
-    """复制文件到目标目录，自动处理重名冲突；返回目标路径。失败返回原路径。"""
-    if not src or not os.path.isfile(src):
-        return src
-    os.makedirs(dst_dir, exist_ok=True)
-    fname = os.path.basename(src)
-    dst = os.path.join(dst_dir, fname)
-    counter = 1
-    while os.path.exists(dst):
-        name, ext = os.path.splitext(fname)
-        dst = os.path.join(dst_dir, f"{name}_{counter}{ext}")
-        counter += 1
-    try:
-        shutil.copy2(src, dst)
-        return dst
-    except OSError:
-        return src
-
-
-# ─────────────────────────────────────────────
-#  后台解析线程
-# ─────────────────────────────────────────────
-
-class ParseWorker(QThread):
-    progress = pyqtSignal(int)
-    result_ready = pyqtSignal(dict)
-    finished = pyqtSignal()
-    error_occurred = pyqtSignal(str)
-
-    def __init__(self, files, data_dir: str = ""):
-        super().__init__()
-        self.files    = files
-        self.data_dir = data_dir   # 目标目录；非空时在后台完成文件复制
-        self._abort   = False
-
-    def abort(self):
-        self._abort = True
-
-    def _copy_pdf(self, src: str) -> str:
-        if not self.data_dir:
-            return src
-        return _copy_file_to_dir(src, os.path.join(self.data_dir, "invoices"))
-
-    def run(self):
-        total = len(self.files)
-        for i, f in enumerate(self.files, 1):
-            if self._abort:
-                break
-            try:
-                data = parse_invoice_pdf(f)
-                # 文件复制在后台完成，主线程槽无需做 IO
-                data["pdf_path"] = self._copy_pdf(data.get("pdf_path", "") or f)
-            except Exception as e:
-                self.error_occurred.emit(f"解析 {os.path.basename(f)} 时出错: {str(e)}")
-                data = {
-                    "pdf_path": f,
-                    "error": str(e),
-                    "invoice_type": "", "buyer_name": "", "buyer_tax_id": "",
-                    "seller_name": "", "amount": "", "tax_rate": "",
-                    "tax_amount": "", "total": "", "invoice_no": "",
-                    "invoice_date": "", "company": "",
-                    "screenshots": [], "contracts": [], "remark": "", "is_red": False
-                }
-            self.result_ready.emit(data)
-            self.progress.emit(int(i / total * 100))
-        self.finished.emit()
-#  主窗口
-# ─────────────────────────────────────────────
 
 # 表格列定义
 COLUMNS = ["序号", "发票PDF", "发票类型", "购买方名称", "纳税人识别号",
@@ -383,31 +314,14 @@ class InvoiceApp(QMainWindow):
             self.table.setColumnWidth(col, width)  # 初始宽度
 
         # 弹性列按初始宽度等比分配（Qt 5 无 setStretchFactor，用 resizeEvent 实现）
-        stretch_factors = {col: w // 10 for col, w in stretch_cols.items()}
-        total_weight = sum(stretch_factors.values())
-        fixed_total_cache = sum(fixed_cols.values())
-
-        def _resize_stretch_cols():
-            available = self.table.viewport().width()
-            free = available - fixed_total_cache
-            if free <= 0:
-                return
-            # 最大余数法：避免取整误差累积导致右侧空白
-            raw = {}
-            remainders = []
-            for col, min_w in stretch_cols.items():
-                exact = free * stretch_factors[col] / total_weight
-                raw[col] = max(min_w, int(exact))
-                remainders.append((col, exact - int(exact)))
-            remainders.sort(key=lambda x: x[1], reverse=True)
-            for i in range(free - sum(raw.values())):
-                raw[remainders[i][0]] += 1
-            for col, w in raw.items():
-                self.table.setColumnWidth(col, w)
+        self._stretch_cols = stretch_cols
+        self._stretch_factors = {col: w // 10 for col, w in stretch_cols.items()}
+        self._stretch_total_weight = sum(self._stretch_factors.values())
+        self._stretch_fixed_total = sum(fixed_cols.values())
 
         self._resize_timer = QTimer(self.table)
         self._resize_timer.setSingleShot(True)
-        self._resize_timer.timeout.connect(_resize_stretch_cols)
+        self._resize_timer.timeout.connect(self._resize_stretch_cols)
 
         self._table_resize_orig = self.table.resizeEvent
         def _on_table_resize(event):
@@ -467,6 +381,24 @@ class InvoiceApp(QMainWindow):
         w._value_label = lbl_v
         return w
 
+    def _resize_stretch_cols(self):
+        available = self.table.viewport().width()
+        free = available - self._stretch_fixed_total
+        if free <= 0:
+            return
+        # 最大余数法：避免取整误差累积导致右侧空白
+        raw = {}
+        remainders = []
+        for col, min_w in self._stretch_cols.items():
+            exact = free * self._stretch_factors[col] / self._stretch_total_weight
+            raw[col] = max(min_w, int(exact))
+            remainders.append((col, exact - int(exact)))
+        remainders.sort(key=lambda x: x[1], reverse=True)
+        for i in range(free - sum(raw.values())):
+            raw[remainders[i][0]] += 1
+        for col, w in raw.items():
+            self.table.setColumnWidth(col, w)
+
     def _set_global_style(self):
         self.setStyleSheet("""
             QMainWindow { background: #F5F8FC; }
@@ -488,28 +420,13 @@ class InvoiceApp(QMainWindow):
 
     # ── 筛选条件 ─────────────────────────────────
     def _get_available_years(self):
-        years = set()
-        for r in self.records:
-            m = re.match(r'(\d{4})年', r.get("invoice_date", ""))
-            if m:
-                years.add(int(m.group(1)))
-        return sorted(years)
+        return get_available_years(self.records)
 
     def _get_available_inv_types(self):
-        types = set()
-        for r in self.records:
-            t = r.get("invoice_type", "").strip()
-            if t:
-                types.add(t)
-        return sorted(types)
+        return get_available_inv_types(self.records)
 
     def _get_available_sellers(self):
-        sellers = set()
-        for r in self.records:
-            s = r.get("seller_name", "").strip()
-            if s:
-                sellers.add(s)
-        return sorted(sellers)
+        return get_available_sellers(self.records)
 
     def _refresh_year_combo(self):
         current = self.combo_year.currentData()
@@ -589,37 +506,10 @@ class InvoiceApp(QMainWindow):
         self._rebuild_table()
 
     def _record_matches_filter(self, rec) -> bool:
-        # 年月筛选
-        if self._filter_year is not None or self._filter_month is not None:
-            m = re.match(r'(\d{4})年(\d{2})月', rec.get("invoice_date", ""))
-            if not m:
-                return False
-            y, mo = int(m.group(1)), int(m.group(2))
-            if self._filter_year  is not None and y  != self._filter_year:
-                return False
-            if self._filter_month is not None and mo != self._filter_month:
-                return False
-        # 发票类型筛选
-        if self._filter_inv_type is not None:
-            if rec.get("invoice_type", "").strip() != self._filter_inv_type:
-                return False
-        # 销售方筛选
-        if self._filter_seller is not None:
-            if rec.get("seller_name", "").strip() != self._filter_seller:
-                return False
-        # 购买方名称/税号模糊搜索（不区分大小写）
-        if self._filter_buyer:
-            buyer_name = rec.get("buyer_name", "").lower()
-            buyer_tax_id = rec.get("buyer_tax_id", "").lower()
-            search_text = self._filter_buyer.lower()
-            if search_text not in buyer_name and search_text not in buyer_tax_id:
-                return False
-        # 企业号模糊搜索（不区分大小写）
-        if self._filter_company:
-            company = rec.get("company", "")
-            if self._filter_company.lower() not in company.lower():
-                return False
-        return True
+        return record_matches_filter(
+            rec, self._filter_year, self._filter_month,
+            self._filter_inv_type, self._filter_seller,
+            self._filter_buyer, self._filter_company)
 
     def _rebuild_table(self):
         self._save_locked = True
@@ -1496,7 +1386,7 @@ class InvoiceApp(QMainWindow):
                     if fill:
                         cell.fill = fill
                     cell.border    = border
-                    cell.alignment = center_align if j in [0, 5] else normal_align
+                    cell.alignment = center_align if j in [0, 6, 7, 8, 9] else normal_align
                 ws.row_dimensions[i].height = 20
 
             # 汇总行

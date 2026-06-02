@@ -1,0 +1,273 @@
+# -*- coding: utf-8 -*-
+"""invoice_tool 模块非 GUI 逻辑单元测试"""
+
+import sys
+import os
+import unittest
+import tempfile
+import shutil
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from invoice_tool import _copy_file_to_dir, InvoiceApp
+
+
+# ── _safe_float 测试 ──────────────────────────
+
+class TestSafeFloat(unittest.TestCase):
+    def test_positive_integer(self):
+        self.assertEqual(InvoiceApp._safe_float(100), 100.0)
+
+    def test_float_string(self):
+        self.assertEqual(InvoiceApp._safe_float("550.00"), 550.0)
+
+    def test_negative_number(self):
+        self.assertEqual(InvoiceApp._safe_float(-100), -100.0)
+
+    def test_negative_string(self):
+        self.assertEqual(InvoiceApp._safe_float("-100.50"), -100.5)
+
+    def test_empty_string(self):
+        self.assertEqual(InvoiceApp._safe_float(""), 0.0)
+
+    def test_none(self):
+        self.assertEqual(InvoiceApp._safe_float(None), 0.0)
+
+    def test_invalid_string(self):
+        self.assertEqual(InvoiceApp._safe_float("abc"), 0.0)
+
+    def test_zero(self):
+        self.assertEqual(InvoiceApp._safe_float(0), 0.0)
+        self.assertEqual(InvoiceApp._safe_float("0"), 0.0)
+        self.assertEqual(InvoiceApp._safe_float("0.00"), 0.0)
+
+    def test_large_number(self):
+        self.assertEqual(InvoiceApp._safe_float("123456789.99"), 123456789.99)
+
+
+# ── _copy_file_to_dir 测试（补充）──────────────
+
+class TestCopyFileToDir(unittest.TestCase):
+    def setUp(self):
+        self.tmp_src = tempfile.mkdtemp()
+        self.tmp_dst = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp_src, ignore_errors=True)
+        shutil.rmtree(self.tmp_dst, ignore_errors=True)
+
+    def test_copy_success(self):
+        src = os.path.join(self.tmp_src, "test.txt")
+        with open(src, "w") as f:
+            f.write("hello")
+        result = _copy_file_to_dir(src, self.tmp_dst)
+        expected = os.path.join(self.tmp_dst, "test.txt")
+        self.assertEqual(result, expected)
+        self.assertTrue(os.path.exists(expected))
+
+    def test_duplicate_rename(self):
+        src = os.path.join(self.tmp_src, "test.txt")
+        with open(src, "w") as f:
+            f.write("hello")
+        _copy_file_to_dir(src, self.tmp_dst)
+        result = _copy_file_to_dir(src, self.tmp_dst)
+        self.assertNotEqual(result, os.path.join(self.tmp_dst, "test.txt"))
+        self.assertTrue(os.path.exists(result))
+        self.assertIn("test_", os.path.basename(result))
+
+    def test_nonexistent_src(self):
+        result = _copy_file_to_dir("/nonexistent/path.txt", self.tmp_dst)
+        self.assertEqual(result, "/nonexistent/path.txt")
+
+    def test_empty_src(self):
+        result = _copy_file_to_dir("", self.tmp_dst)
+        self.assertEqual(result, "")
+
+    def test_creates_dst_dir(self):
+        dst_sub = os.path.join(self.tmp_dst, "new_subdir")
+        src = os.path.join(self.tmp_src, "a.txt")
+        with open(src, "w") as f:
+            f.write("test")
+        result = _copy_file_to_dir(src, dst_sub)
+        self.assertTrue(os.path.exists(result))
+        self.assertTrue(os.path.isdir(dst_sub))
+
+
+# ── _record_matches_filter 测试 ───────────────
+
+class TestRecordMatchesFilter(unittest.TestCase):
+    """使用 __new__ 绕过 GUI 初始化，直接测试筛选逻辑"""
+
+    def _make_app(self, **filters):
+        app = InvoiceApp.__new__(InvoiceApp)
+        app._filter_year = None
+        app._filter_month = None
+        app._filter_inv_type = None
+        app._filter_seller = None
+        app._filter_buyer = ""
+        app._filter_company = ""
+        for k, v in filters.items():
+            setattr(app, k, v)
+        return app
+
+    def test_no_filter_passes_all(self):
+        app = self._make_app()
+        self.assertTrue(app._record_matches_filter({"invoice_date": "2024年11月30日"}))
+
+    def test_year_filter_match(self):
+        app = self._make_app(_filter_year=2024)
+        self.assertTrue(app._record_matches_filter({"invoice_date": "2024年05月15日"}))
+        self.assertFalse(app._record_matches_filter({"invoice_date": "2025年01月01日"}))
+
+    def test_year_filter_no_date(self):
+        app = self._make_app(_filter_year=2024)
+        self.assertFalse(app._record_matches_filter({"invoice_date": ""}))
+        self.assertFalse(app._record_matches_filter({}))
+
+    def test_month_filter_match(self):
+        app = self._make_app(_filter_month=6)
+        self.assertTrue(app._record_matches_filter({"invoice_date": "2024年06月01日"}))
+        self.assertFalse(app._record_matches_filter({"invoice_date": "2024年07月01日"}))
+
+    def test_year_and_month_filter(self):
+        app = self._make_app(_filter_year=2024, _filter_month=11)
+        self.assertTrue(app._record_matches_filter({"invoice_date": "2024年11月30日"}))
+        self.assertFalse(app._record_matches_filter({"invoice_date": "2024年10月01日"}))
+        self.assertFalse(app._record_matches_filter({"invoice_date": "2023年11月01日"}))
+
+    def test_invoice_type_filter(self):
+        app = self._make_app(_filter_inv_type="增值税专用发票")
+        self.assertTrue(app._record_matches_filter({"invoice_type": "增值税专用发票"}))
+        self.assertFalse(app._record_matches_filter({"invoice_type": "普通发票"}))
+
+    def test_seller_filter(self):
+        app = self._make_app(_filter_seller="京东世纪")
+        self.assertTrue(app._record_matches_filter({"seller_name": "京东世纪"}))
+        self.assertFalse(app._record_matches_filter({"seller_name": "华为技术"}))
+
+    def test_buyer_fuzzy_search(self):
+        app = self._make_app(_filter_buyer="长富")
+        self.assertTrue(app._record_matches_filter({"buyer_name": "福建长富乳品有限公司", "buyer_tax_id": ""}))
+        self.assertFalse(app._record_matches_filter({"buyer_name": "其他公司", "buyer_tax_id": ""}))
+
+    def test_buyer_tax_id_search(self):
+        app = self._make_app(_filter_buyer="91350700")
+        self.assertTrue(app._record_matches_filter({"buyer_name": "", "buyer_tax_id": "91350700156534567X"}))
+        self.assertFalse(app._record_matches_filter({"buyer_name": "", "buyer_tax_id": "12345678"}))
+
+    def test_buyer_case_insensitive(self):
+        app = self._make_app(_filter_buyer="abc")
+        self.assertTrue(app._record_matches_filter({"buyer_name": "ABC公司", "buyer_tax_id": ""}))
+
+    def test_company_fuzzy_search(self):
+        app = self._make_app(_filter_company="14786")
+        self.assertTrue(app._record_matches_filter({"company": "14786"}))
+        self.assertFalse(app._record_matches_filter({"company": "99999"}))
+
+    def test_company_case_insensitive(self):
+        app = self._make_app(_filter_company="abc")
+        self.assertTrue(app._record_matches_filter({"company": "ABC Corp"}))
+
+    def test_multiple_filters_all_match(self):
+        app = self._make_app(
+            _filter_year=2024, _filter_month=11,
+            _filter_inv_type="增值税专用发票",
+            _filter_seller="京东世纪"
+        )
+        rec = {
+            "invoice_date": "2024年11月30日",
+            "invoice_type": "增值税专用发票",
+            "seller_name": "京东世纪"
+        }
+        self.assertTrue(app._record_matches_filter(rec))
+
+    def test_multiple_filters_one_fails(self):
+        app = self._make_app(
+            _filter_year=2024,
+            _filter_inv_type="增值税专用发票"
+        )
+        rec = {
+            "invoice_date": "2024年11月30日",
+            "invoice_type": "普通发票"
+        }
+        self.assertFalse(app._record_matches_filter(rec))
+
+
+# ── _init_record_fields 测试 ─────────────────
+
+class TestInitRecordFields(unittest.TestCase):
+    def setUp(self):
+        self.app = InvoiceApp.__new__(InvoiceApp)
+
+    def test_sets_defaults(self):
+        data = {}
+        self.app._init_record_fields(data)
+        self.assertEqual(data["pdf_path"], "")
+        self.assertEqual(data["invoice_type"], "")
+        self.assertEqual(data["seller_name"], "")
+        self.assertEqual(data["remark"], "")
+        self.assertEqual(data["screenshots"], [])
+        self.assertEqual(data["contracts"], [])
+        self.assertFalse(data["is_red"])
+
+    def test_preserves_existing_values(self):
+        data = {"pdf_path": "/test.pdf", "invoice_type": "增值税专用发票"}
+        self.app._init_record_fields(data)
+        self.assertEqual(data["pdf_path"], "/test.pdf")
+        self.assertEqual(data["invoice_type"], "增值税专用发票")
+
+    def test_red_invoice_negates_amounts(self):
+        data = {"amount": "550.00", "tax_amount": "71.50", "total": "621.50", "is_red": True}
+        self.app._init_record_fields(data)
+        self.assertEqual(data["amount"], "-550.00")
+        self.assertEqual(data["tax_amount"], "-71.50")
+        self.assertEqual(data["total"], "-621.50")
+
+    def test_red_invoice_already_negative(self):
+        data = {"amount": "-550.00", "is_red": True}
+        self.app._init_record_fields(data)
+        self.assertEqual(data["amount"], "-550.00")  # 不重复加负号
+
+    def test_blue_invoice_amounts_unchanged(self):
+        data = {"amount": "550.00", "total": "621.50", "is_red": False}
+        self.app._init_record_fields(data)
+        self.assertEqual(data["amount"], "550.00")
+        self.assertEqual(data["total"], "621.50")
+
+
+# ── _find_record_index 测试 ──────────────────
+
+class TestFindRecordIndex(unittest.TestCase):
+    def setUp(self):
+        self.app = InvoiceApp.__new__(InvoiceApp)
+        self.app.records = [
+            {"invoice_no": "11111111"},
+            {"invoice_no": "22222222"},
+            {"invoice_no": "33333333"},
+        ]
+
+    def test_find_existing(self):
+        self.assertEqual(self.app._find_record_index("22222222"), 1)
+
+    def test_find_first(self):
+        self.assertEqual(self.app._find_record_index("11111111"), 0)
+
+    def test_find_last(self):
+        self.assertEqual(self.app._find_record_index("33333333"), 2)
+
+    def test_find_nonexistent(self):
+        self.assertIsNone(self.app._find_record_index("99999999"))
+
+    def test_find_empty_string(self):
+        self.assertIsNone(self.app._find_record_index(""))
+
+    def test_find_none(self):
+        self.assertIsNone(self.app._find_record_index(None))
+
+    def test_empty_records(self):
+        self.app.records = []
+        self.assertIsNone(self.app._find_record_index("11111111"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
