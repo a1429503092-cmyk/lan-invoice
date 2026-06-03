@@ -74,10 +74,8 @@ class PdfViewerDialog(QDialog):
 
         self._load_pdf()
         self._build_ui()
-
-        if self._pages and not self._load_error:
-            self._start_render()
         self._update_ui_state()
+        self._first_show = True
 
     # ── 加载 PDF ─────────────────────────────────
 
@@ -316,6 +314,16 @@ class PdfViewerDialog(QDialog):
         os.startfile(self.pdf_path)
 
     # ── 事件 ─────────────────────────────────────
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, '_first_show', False):
+            self._first_show = False
+            if self._pages and not self._load_error:
+                # 延迟到事件循环就绪后启动渲染，确保信号能投递
+                self._set_loading(True)
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(50, self._start_render)
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Left:
