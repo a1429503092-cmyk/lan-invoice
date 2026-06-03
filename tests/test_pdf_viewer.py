@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox
 from PIL import Image
 
 import pdfplumber
-from ui.dialogs.pdf_viewer import PdfViewerDialog
+from ui.dialogs.pdf_viewer import PdfViewerDialog, RenderWorker
 
 
 class MockPageImage:
@@ -89,10 +89,14 @@ class TestPdfViewerBasic(unittest.TestCase):
             return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
+        # 让 RenderWorker.start() 同步执行 run()，避免测试中多线程问题
+        cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
+        cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls._render_patcher.stop()
+        cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):
@@ -196,10 +200,13 @@ class TestPdfViewerKeyboard(unittest.TestCase):
             return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
+        cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
+        cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls._render_patcher.stop()
+        cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):
@@ -254,10 +261,13 @@ class TestPdfViewerKeyButtons(unittest.TestCase):
             return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
+        cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
+        cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls._render_patcher.stop()
+        cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):
@@ -305,10 +315,13 @@ class TestPdfViewerZoom(unittest.TestCase):
             return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
+        cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
+        cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls._render_patcher.stop()
+        cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):
@@ -363,10 +376,13 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
             return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
+        cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
+        cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
         cls._render_patcher.stop()
+        cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):
@@ -391,7 +407,7 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
         with patch("pdfplumber.open") as mock_open:
             mock_open.side_effect = [Exception("password required"),
                                      MagicMock()]
-            with patch.object(PdfViewerDialog, "_render_current"):
+            with patch.object(PdfViewerDialog, "_start_render"):
                 with patch("PyQt5.QtWidgets.QInputDialog.getText",
                            return_value=("123456", True)):
                     dlg = PdfViewerDialog("/fake/encrypted.pdf")
@@ -405,7 +421,7 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
                 Exception("password required"),
                 Exception("incorrect password"),
             ]
-            with patch.object(PdfViewerDialog, "_render_current"):
+            with patch.object(PdfViewerDialog, "_start_render"):
                 with patch("PyQt5.QtWidgets.QInputDialog.getText",
                            return_value=("wrong", True)):
                     dlg = PdfViewerDialog("/fake/encrypted.pdf")
@@ -416,7 +432,7 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
         """测试 25: 密码取消提示"""
         with patch("pdfplumber.open") as mock_open:
             mock_open.side_effect = Exception("password required")
-            with patch.object(PdfViewerDialog, "_render_current"):
+            with patch.object(PdfViewerDialog, "_start_render"):
                 with patch("PyQt5.QtWidgets.QInputDialog.getText",
                            return_value=("", False)):
                     dlg = PdfViewerDialog("/fake/encrypted.pdf")

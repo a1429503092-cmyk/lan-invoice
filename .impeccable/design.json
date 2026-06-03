@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-03T00:00:00+08:00",
+  "title": "Design System: 发票归档工具",
+  "extensions": {
+    "colorMeta": {
+      "accent":       { "role": "primary",  "displayName": "档案蓝",   "canonical": "#2879D0", "tonalRamp": ["#0D2F54","#13447A","#1A5AA0","#2170C6","#2879D0","#4D94D9","#73AFE3","#99C9EC","#BFE0F5","#E8F1FB"] },
+      "accent-light": { "role": "neutral",  "displayName": "浅蓝底",   "canonical": "#E8F1FB", "tonalRamp": ["#D6E4F5","#DCE8F6","#E0EBF7","#E5EEF9","#E8F1FB","#EBF3FC","#EEF5FD","#F1F7FD","#F5F9FE","#F8FBFE"] },
+      "bg":           { "role": "neutral",  "displayName": "冷灰底",   "canonical": "#F2F4F6", "tonalRamp": ["#E4E7EA","#E7EAED","#EBEDF0","#EEF0F3","#F2F4F6","#F4F6F7","#F7F8F9","#F9FAFB","#FBFCFC","#FEFEFE"] },
+      "bg-alt":       { "role": "neutral",  "displayName": "交替行灰", "canonical": "#F8F9FA", "tonalRamp": ["#EAECEE","#EDEFF1","#F0F2F4","#F4F5F7","#F8F9FA","#F9FAFB","#FAFBFC","#FCFCFD","#FDFDFE","#FFFFFF"] },
+      "text":         { "role": "neutral",  "displayName": "正文墨色", "canonical": "#1A2130", "tonalRamp": ["#090B10","#0D1118","#111720","#151C28","#1A2130","#313742","#484D59","#5F6371","#767A88","#8F99A8"] },
+      "text-sec":     { "role": "neutral",  "displayName": "次级灰文", "canonical": "#5C6778", "tonalRamp": ["#2E333C","#38404B","#424C5A","#4F5969","#5C6778","#6C7686","#7D8694","#8D96A3","#9EA6B1","#AFB6BF"] }
+    },
+    "typographyMeta": {
+      "body":     { "displayName": "正文", "purpose": "表格内容、按钮文字、输入框、下拉选项。全界面默认字号。" },
+      "label":    { "displayName": "标签", "purpose": "辅助说明、版本号、统计标签。最小可用字号。" },
+      "title":    { "displayName": "标题", "purpose": "区域标题、对话框标题、汇总数值标签。" },
+      "headline": { "displayName": "大标题", "purpose": "窗口主标题，仅页面级使用。" }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "默认操作按钮。白底灰边，hover 时背景变灰。",
+      "html": "<button class=\"ds-btn-primary\">导入发票PDF</button>",
+      "css": ".ds-btn-primary { background: #FFFFFF; color: #1A2130; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; font-weight: 400; padding: 5px 14px; border: 1px solid #CFD4DA; border-radius: 4px; cursor: pointer; } .ds-btn-primary:hover { background: #EBEEF1; border-color: #8F99A8; } .ds-btn-primary:active { background: #E0E3E7; } .ds-btn-primary:disabled { background: #F8F9FA; color: #8F99A8; border-color: #E0E3E7; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "删除等破坏性操作的确认按钮。红底白字。",
+      "html": "<button class=\"ds-btn-danger\">确认删除</button>",
+      "css": ".ds-btn-danger { background: #DC2626; color: #FFFFFF; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; font-weight: 700; padding: 7px 22px; border: none; border-radius: 4px; cursor: pointer; } .ds-btn-danger:disabled { background: #AAAAAA; color: #666666; }"
+    },
+    {
+      "name": "Cancel Button",
+      "kind": "button",
+      "refersTo": "button-cancel",
+      "description": "取消/返回操作。浅灰底，视觉回退。",
+      "html": "<button class=\"ds-btn-cancel\">取消</button>",
+      "css": ".ds-btn-cancel { background: #F0F0F0; color: #333333; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; padding: 7px 18px; border: none; border-radius: 4px; cursor: pointer; } .ds-btn-cancel:hover { background: #E4E4E4; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "单行文本输入。直角白底灰边，聚焦时边框变蓝。",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"输入企业号...\" />",
+      "css": ".ds-input { background: #FFFFFF; color: #1A2130; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; padding: 4px 8px; border: 1px solid #CFD4DA; border-radius: 0; outline: none; } .ds-input:focus { border-color: #2879D0; } .ds-input::placeholder { color: #8F99A8; } .ds-input:disabled { background: #F8F9FA; color: #8F99A8; border-color: #E0E3E7; }"
+    },
+    {
+      "name": "ComboBox",
+      "kind": "input",
+      "refersTo": "combobox",
+      "description": "下拉选择框。直角，右侧有分隔的箭头区。",
+      "html": "<div class=\"ds-combobox\"><span class=\"ds-combobox-text\">全部年份</span><span class=\"ds-combobox-arrow\">▾</span></div>",
+      "css": ".ds-combobox { display: inline-flex; align-items: center; background: #FFFFFF; border: 1px solid #CFD4DA; border-radius: 0; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; color: #1A2130; cursor: pointer; } .ds-combobox:hover { border-color: #8F99A8; } .ds-combobox-text { padding: 3px 8px; } .ds-combobox-arrow { padding: 3px 8px; border-left: 1px solid #E0E3E7; color: #5C6778; font-size: 10px; }"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "refersTo": "table-header",
+      "description": "核心组件。蓝底表头，白底灰格线，交替行色。",
+      "html": "<table class=\"ds-table\"><thead><tr><th>序号</th><th>发票PDF</th><th>发票类型</th><th>购买方名称</th><th>金额(元)</th></tr></thead><tbody><tr><td>1</td><td>发票001.pdf</td><td>增值税专用发票</td><td>某某科技有限公司</td><td>12,500.00</td></tr><tr class=\"ds-table-alt\"><td>2</td><td>发票002.pdf</td><td>普通发票</td><td>某某商贸有限公司</td><td>3,200.00</td></tr><tr class=\"ds-table-selected\"><td>3</td><td>发票003.pdf</td><td>全电发票</td><td>某某信息技术有限公司</td><td>45,800.00</td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border-collapse: collapse; font-family: 'Microsoft YaHei', sans-serif; font-size: 13px; color: #1A2130; border: 1px solid #CFD4DA; } .ds-table th { background: #2879D0; color: #FFFFFF; font-weight: 600; font-size: 13px; padding: 7px 8px; text-align: left; border-right: 1px solid rgba(255,255,255,0.15); } .ds-table td { padding: 5px 8px; background: #FFFFFF; border-bottom: 1px solid #E0E3E7; } .ds-table .ds-table-alt td { background: #F8F9FA; } .ds-table .ds-table-selected td { background: #E3EDF7; } .ds-table tr:hover td { background: #EBEEF1; }"
+    },
+    {
+      "name": "Summary Frame",
+      "kind": "card",
+      "refersTo": "summary-frame",
+      "description": "汇总统计栏。浅蓝底，从表格白底中浮出。",
+      "html": "<div class=\"ds-summary\"><div class=\"ds-summary-item\"><span class=\"ds-summary-label\">发票总数</span><span class=\"ds-summary-value\">128 张</span></div><div class=\"ds-summary-item\"><span class=\"ds-summary-label\">金额合计</span><span class=\"ds-summary-value\">¥ 256,800.00</span></div><div class=\"ds-summary-item\"><span class=\"ds-summary-label\">税额合计</span><span class=\"ds-summary-value\">¥ 33,384.00</span></div></div>",
+      "css": ".ds-summary { display: flex; gap: 24px; background: #E8F1FB; border: 1px solid #C5D4E8; padding: 8px 12px; font-family: 'Microsoft YaHei', sans-serif; } .ds-summary-item { display: flex; flex-direction: column; gap: 2px; } .ds-summary-label { font-size: 11px; color: #5C6778; } .ds-summary-value { font-size: 15px; font-weight: 700; color: #1A2130; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "「蓝印档案室」",
+    "overview": "经典蓝 + 归档的秩序感。像档案室的金属柜，分类清晰、查找高效。冷色系底色承托数据表格，蓝色表头引导视线，克制到没有一个多余的像素。所有视觉元素服务于一个目标：让财务人员一眼看到需要的数字。\n\n这是一个 product 型系统：设计服务于功能，信息密度高但不拥挤，操作路径短。在财务人员的日常工作流中，这个界面应该像 Excel 一样给人以\"我能掌控数据\"的信心。",
+    "keyCharacteristics": [
+      "冷色工具感：冰蓝 #2879D0 作为唯一强调色，灰白梯度构建层次",
+      "锐利高效：微圆角 (4px) 按钮，清晰 1px 边框，即时响应无动画",
+      "扁平分层：通过色彩深浅区分层级，不用阴影",
+      "数据优先：表格是核心交互界面，表头深色吸睛，行交替色辅助扫描"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "档案蓝是唯一强调色。任何新颜色在加入系统前必须证明：不能复用档案蓝、不能用中性色表达、不是装饰。", "section": "colors" },
+      { "name": "The No-Pure-Black Rule", "body": "正文色 #1A2130 替代 #000。在白色背景上足够深、足够清晰，但没有纯黑的刺目感。", "section": "colors" },
+      { "name": "The Single Font Rule", "body": "全界面仅使用微软雅黑。通过字重 (400/600/700) 和字号 (11/13/15/17px) 建立层级，不引入第二字体。", "section": "typography" },
+      { "name": "The Two-Weight Rule", "body": "仅使用 Regular (400) 和 Bold (700)。不使用 Light、Medium、Extra Bold 等中间字重。二元对比比多级灰度更清晰。", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "所有界面元素在静止状态下都是扁平的。不使用 box-shadow。深度感知通过色彩明度差和 1px 边框实现。", "section": "elevation" }
+    ],
+    "dos": [
+      "用档案蓝 #2879D0 作为唯一强调色，保持 ≤10% 面积占比",
+      "用 1px 边框 #CFD4DA 划分区域，清晰但不厚重",
+      "表头用深色蓝底白字，一眼定位列名",
+      "用交替行色 #F8F9FA 辅助长表横向扫描",
+      "按钮标签用行为动词（\"确认删除\" > \"确定\"；\"取消\" > \"否\"）",
+      "破坏性操作使用红底 #DC2626 按钮，与普通按钮形成明确视觉区分"
+    ],
+    "donts": [
+      "使用渐变色。所有背景、按钮、表头均为纯色",
+      "使用投影 (box-shadow)。层次通过色彩明度差表达",
+      "使用圆角大于 6px。过度圆角产生\"玩具感\"，与 PRODUCT.md 的专业定位冲突",
+      "引入第二个强调色。档案蓝的稀缺性就是它的力量",
+      "在正文中使用 #000000 纯黑。用 #1A2130 替代",
+      "过度花哨的装饰元素：无渐变文字、无毛玻璃效果、无大圆角卡片、无彩色左边框装饰"
+    ]
+  }
+}

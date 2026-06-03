@@ -197,10 +197,51 @@ class TestRecordMatchesFilter(unittest.TestCase):
         self.assertTrue(record_matches_filter({"invoice_date": "2024年01月01日"}, filter_year=2024))
         self.assertFalse(record_matches_filter({}, filter_year=2024))
 
+    # ── Invoice 对象兼容 ──────────────────────
+    def test_works_with_invoice_object(self):
+        from models import Invoice
+        inv = Invoice(
+            invoice_date="2024年11月30日",
+            invoice_type="增值税专用发票",
+            seller_name="京东世纪",
+            buyer_name="福建长富乳品有限公司",
+            buyer_tax_id="91350700156534567X",
+            company="14786",
+        )
+        self.assertTrue(record_matches_filter(inv, filter_year=2024, filter_month=11))
+        self.assertTrue(record_matches_filter(inv, filter_buyer="长富"))
+        self.assertTrue(record_matches_filter(inv, filter_company="14786"))
+        self.assertFalse(record_matches_filter(inv, filter_year=2025))
+
+    def test_invoice_object_empty_date_filtered(self):
+        from models import Invoice
+        inv = Invoice()  # all fields empty
+        self.assertTrue(record_matches_filter(inv))  # no filter → pass
+        self.assertFalse(record_matches_filter(inv, filter_year=2024))  # year filter → fail on empty date
+
     def test_seller_exact_match_only(self):
         """销售方筛选是精确匹配而非模糊"""
         self.assertFalse(record_matches_filter(
             {"seller_name": "北京京东世纪"}, filter_seller="京东"))
+
+    # ── 边界补充 ──────────────────────────────
+    def test_empty_buyer_search_passes_all(self):
+        """空搜索字符串应匹配所有"""
+        self.assertTrue(record_matches_filter({"buyer_name": "ABC"}, filter_buyer=""))
+
+    def test_empty_company_search_passes_all(self):
+        self.assertTrue(record_matches_filter({"company": "14786"}, filter_company=""))
+
+    def test_get_available_years_from_invoice_objects(self):
+        from models import Invoice
+        invs = [Invoice(invoice_date="2024年06月01日"), Invoice(invoice_date="2025年01月01日")]
+        self.assertEqual(get_available_years(invs), [2024, 2025])
+
+    def test_get_available_years_mixed_input(self):
+        """混合 dict 和 Invoice 都能处理"""
+        from models import Invoice
+        invs = [{"invoice_date": "2024年03月01日"}, Invoice(invoice_date="2025年01月01日")]
+        self.assertEqual(get_available_years(invs), [2024, 2025])
 
 
 if __name__ == "__main__":

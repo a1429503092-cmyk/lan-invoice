@@ -77,7 +77,7 @@ class TestDeleteConfirmDialog(unittest.TestCase):
         recs = self._make_records(3)
         dlg = DeleteConfirmDialog(recs)
         # 验证对话框正常创建
-        self.assertEqual(dlg.windowTitle(), "⚠️ 确认删除")
+        self.assertEqual(dlg.windowTitle(), "确认删除")
         dlg.close()
 
     def test_partial_record_fields(self):

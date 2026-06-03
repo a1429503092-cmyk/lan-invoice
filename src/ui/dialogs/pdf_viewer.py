@@ -5,14 +5,39 @@ import os
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QScrollArea, QMessageBox,
+    QScrollArea, QMessageBox, QApplication,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
 
 import pdfplumber
 
 from ui.theme import DARK_SURFACE, DARK_TEXT, DIALOG_QSS_DARK
+
+
+class RenderWorker(QThread):
+    """后台渲染 PDF 页面为 QPixmap，避免阻塞 UI"""
+    finished = pyqtSignal(QPixmap, str)  # pixmap, error_message
+
+    def __init__(self, page, render_dpi: int = 150):
+        super().__init__()
+        self.page = page
+        self.render_dpi = render_dpi
+
+    def run(self):
+        try:
+            rotation = getattr(self.page, 'rotation', 0)
+            img = self.page.to_image(resolution=self.render_dpi, antialias=True)
+            pil_img = img.original
+            if rotation:
+                pil_img = pil_img.rotate(-rotation, expand=True)
+            pil_img = pil_img.convert("RGBA")
+            data = pil_img.tobytes("raw", "RGBA")
+            qim = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+            pix = QPixmap.fromImage(qim)
+            self.finished.emit(pix, "")
+        except Exception as e:
+            self.finished.emit(QPixmap(), str(e))
 
 
 class PdfViewerDialog(QDialog):
@@ -28,8 +53,10 @@ class PdfViewerDialog(QDialog):
         self._pdf = None
         self._load_error = None
         self._render_dpi = 150
+        self._worker = None
+        self._rendering = False
 
-        # 检测系统 DPI 缩放：4K 屏幕自动提升渲染分辨率
+        # 检测系统 DPI 缩放
         try:
             app = QApplication.instance()
             if app:
@@ -49,13 +76,12 @@ class PdfViewerDialog(QDialog):
         self._build_ui()
 
         if self._pages and not self._load_error:
-            self._render_current()
-        self._update_page_label()
+            self._start_render()
+        self._update_ui_state()
 
     # ── 加载 PDF ─────────────────────────────────
 
     def _load_pdf(self):
-        """加载 PDF，处理不存在/损坏/加密"""
         try:
             self._pdf = pdfplumber.open(self.pdf_path)
             self._pages = self._pdf.pages
@@ -87,6 +113,42 @@ class PdfViewerDialog(QDialog):
                                     f"无法打开 PDF 文件，文件可能已损坏或加密：\n{self.pdf_path}")
             self._pages = []
 
+    # ── 后台渲染 ─────────────────────────────────
+
+    def _start_render(self):
+        if self._rendering or not self._pages:
+            return
+        self._rendering = True
+        self._set_loading(True)
+        page = self._pages[self._current_page]
+        self._worker = RenderWorker(page, self._render_dpi)
+        self._worker.finished.connect(self._on_render_done)
+        self._worker.start()
+
+    def _on_render_done(self, pixmap: QPixmap, error: str):
+        self._rendering = False
+        self._worker = None
+        self._set_loading(False)
+
+        if error:
+            QMessageBox.warning(self, "渲染失败",
+                                f"第 {self._current_page + 1} 页渲染失败，"
+                                f"请用「系统打开」查看完整内容。\n\n{error}")
+            return
+
+        self._original_pixmap = pixmap
+        self._apply_zoom()
+
+    def _set_loading(self, loading: bool):
+        """显示/隐藏加载状态"""
+        if loading:
+            self.img_label.setText(f"正在加载第 {self._current_page + 1} 页…")
+            self.img_label.setStyleSheet(
+                f"color:{DARK_TEXT}; font-size:15px; background:{DARK_SURFACE};"
+            )
+        else:
+            self.img_label.setStyleSheet(f"background:{DARK_SURFACE};")
+
     # ── 构建 UI ──────────────────────────────────
 
     def _build_ui(self):
@@ -94,7 +156,6 @@ class PdfViewerDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # 滚动区域
         self.scroll = QScrollArea()
         self.scroll.setAlignment(Qt.AlignCenter)
         self.scroll.setStyleSheet(
@@ -172,49 +233,11 @@ class PdfViewerDialog(QDialog):
         action_row.addWidget(self.btn_close)
         layout.addLayout(action_row)
 
-        # 应用暗色主题
         self.setStyleSheet(DIALOG_QSS_DARK)
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
 
-        # 单页 PDF 隐藏导航
-        if len(self._pages) <= 1:
-            self.btn_prev.setVisible(False)
-            self.btn_next.setVisible(False)
-            self.lbl_page.setVisible(False)
-
-        # 无页面时禁用按钮
-        if not self._pages:
-            for btn in (self.btn_prev, self.btn_next,
-                        self.btn_fit_w, self.btn_fit_p, self.btn_1to1,
-                        self.btn_sys):
-                btn.setEnabled(False)
-
     # ── 渲染 ─────────────────────────────────────
-
-    def _render_current(self):
-        if not self._pages or self._load_error:
-            return
-        try:
-            page = self._pages[self._current_page]
-            # 检测页面旋转
-            rotation = getattr(page, 'rotation', 0)
-            img = page.to_image(resolution=self._render_dpi, antialias=True)
-
-            if rotation:
-                pil_img = img.original.rotate(-rotation, expand=True)
-            else:
-                pil_img = img.original
-
-            pil_img = pil_img.convert("RGBA")
-            data = pil_img.tobytes("raw", "RGBA")
-            qim = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
-            self._original_pixmap = QPixmap.fromImage(qim)
-            self._apply_zoom()
-        except Exception:
-            self._load_error = "渲染失败"
-            QMessageBox.warning(self, "渲染失败",
-                                "PDF 渲染失败，请用「系统打开」查看。")
 
     def _apply_zoom(self):
         if self._original_pixmap is None:
@@ -236,24 +259,40 @@ class PdfViewerDialog(QDialog):
                 sw, sh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.img_label.setPixmap(pix)
 
-    def _update_page_label(self):
+    def _update_ui_state(self):
         n = len(self._pages)
+        is_single = n <= 1
+
+        self.btn_prev.setVisible(not is_single)
+        self.btn_next.setVisible(not is_single)
+        self.lbl_page.setVisible(not is_single)
+
         if n > 1:
             self.lbl_page.setText(f"{self._current_page + 1} / {n}")
-        self.btn_prev.setEnabled(self._current_page > 0)
-        self.btn_next.setEnabled(self._current_page < n - 1)
+
+        self.btn_prev.setEnabled(self._current_page > 0 and not self._rendering)
+        self.btn_next.setEnabled(self._current_page < n - 1 and not self._rendering)
+
+        # 无页面时禁用操作按钮
+        has_pages = bool(self._pages) and not self._load_error
+        for btn in (self.btn_fit_w, self.btn_fit_p, self.btn_1to1):
+            btn.setEnabled(has_pages)
+        self.btn_prev.setEnabled(self.btn_prev.isEnabled() and has_pages)
+        self.btn_next.setEnabled(self.btn_next.isEnabled() and has_pages)
 
     # ── 翻页 ─────────────────────────────────────
 
     def _go_to_page(self, index):
-        if not self._pages:
+        if not self._pages or self._rendering:
             return
         n = len(self._pages)
         index = max(0, min(index, n - 1))
         if index != self._current_page:
             self._current_page = index
-            self._render_current()
-            self._update_page_label()
+            self._original_pixmap = None
+            self.img_label.setPixmap(QPixmap())
+            self._update_ui_state()
+            self._start_render()
 
     def _prev_page(self):
         self._go_to_page(self._current_page - 1)
@@ -297,6 +336,11 @@ class PdfViewerDialog(QDialog):
         self._apply_zoom()
 
     def closeEvent(self, e):
+        # 取消正在进行的渲染
+        if self._worker and self._worker.isRunning():
+            self._worker.finished.disconnect()
+            self._worker.quit()
+            self._worker.wait(1000)
         self.img_label.setPixmap(QPixmap())
         if self._pdf:
             self._pdf.close()

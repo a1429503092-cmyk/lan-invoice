@@ -15,7 +15,7 @@ from invoice_parser import (
     _extract_buyer_info, _extract_seller_name, _extract_sections,
     _set_financial, _extract_financials,
 )
-from invoice_tool import _copy_file_to_dir
+from utils import copy_file_to_dir as _copy_file_to_dir
 
 
 # ── 测试用的发票文本片段 ──────────────────────
@@ -485,6 +485,63 @@ class TestExtractFinancials(unittest.TestCase):
         self.assertEqual(result["tax_amount"], "")
 
 
+# ── 销售方提取补充 ────────────────────────────
+
+class TestExtractSellerExtended(unittest.TestCase):
+    """覆盖 invoice_parser line 224: 兜底销售方模式"""
+
+    def test_seller_secondary_pattern_with_co_ltd(self):
+        """(?:销售方|销方) 匹配含有限公司的销售方名称"""
+        text = "销售方：北京京东世纪信息技术有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "北京京东世纪信息技术有限公司")
+
+    def test_seller_xiaofang_pattern(self):
+        """销方 前缀匹配"""
+        text = "销方：神州数码集团股份有限公司"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "神州数码集团股份有限公司")
+
+    def test_seller_xiaofang_prefix_cooperative(self):
+        """销方 + 合作社模式（line 222 专用前缀，不被 line 218 拦截）"""
+        text = "销方：东台市富农蔬菜专业合作社"
+        result = _extract_seller_name(text, "", "")
+        self.assertEqual(result, "东台市富农蔬菜专业合作社")
+
+
+# ── 金额计算边界补充 ──────────────────────────
+
+class TestExtractFinancialsCalcEdgeCases(unittest.TestCase):
+    """覆盖 invoice_parser lines 327-328, 334-335: ValueError/TypeError 异常"""
+
+    def test_auto_calc_tax_with_invalid_rate_handles_valueerror(self):
+        """税率非数字时自动计算税额不崩溃（line 327-328）"""
+        result = {"amount": "550.00", "tax_rate": "abc%", "tax_amount": "",
+                  "total": "", "is_red": False}
+        _extract_financials("", result)
+        # 税率无效，税额保持空（不抛出异常）
+        self.assertEqual(result["tax_amount"], "")
+
+    def test_auto_calc_total_with_invalid_amount_handles_valueerror(self):
+        """金额非数字时自动计算总价不崩溃（line 334-335）"""
+        result = {"amount": "not_a_number", "tax_rate": "",
+                  "tax_amount": "71.50", "total": "", "is_red": False}
+        _extract_financials("", result)
+        # 金额无效，总价保持空
+        self.assertEqual(result["total"], "")
+
+    def test_combined_pattern_extracts_tax_rate(self):
+        """line 294: 组合金额模式中提取征收率"""
+        result = {"amount": "", "tax_rate": "", "tax_amount": "", "total": "",
+                  "is_red": False}
+        # 模拟模式4：数量×单价 金额 征收率 税额
+        text = "*牛奶*100*5.50 550.00 3% 16.50"
+        _extract_financials(text, result)
+        self.assertEqual(result["amount"], "550.00")
+        self.assertEqual(result["tax_rate"], "3%")
+        self.assertEqual(result["tax_amount"], "16.50")
+
+
 # ── _copy_file_to_dir 测试 ──────────────────
 
 class TestCopyFileToDir(unittest.TestCase):
@@ -776,6 +833,107 @@ class TestExtractPdfText(unittest.TestCase):
             text = _extract_pdf_text('/fake_bad_table.pdf')
 
         self.assertIn("文字内容", text)
+
+
+# ── _extract_sections 补充 ──────────────────
+
+class TestExtractSectionsExtra(unittest.TestCase):
+    def test_buyer_only(self):
+        text = "购买方信息\n名称：测试公司"
+        buyer, seller = _extract_sections(text)
+        self.assertIn("测试公司", buyer)
+        self.assertEqual(seller, "")
+
+    def test_seller_only(self):
+        text = "销售方信息\n名称：销方公司"
+        buyer, seller = _extract_sections(text)
+        self.assertEqual(buyer, "")
+        self.assertIn("销方公司", seller)
+
+    def test_alternative_keywords(self):
+        text = "买方信息\n名称：买方公司\n销方信息\n名称：销方公司"
+        buyer, seller = _extract_sections(text)
+        self.assertIn("买方公司", buyer)
+        self.assertIn("销方公司", seller)
+
+
+# ── _extract_buyer_info 补充 ────────────────
+
+class TestExtractBuyerInfoExtra(unittest.TestCase):
+    def test_tax_id_18_chars(self):
+        text = "纳税人识别号：123456789012345678"
+        _, tax_id = _extract_buyer_info(text, "")
+        self.assertEqual(tax_id, "123456789012345678")
+
+    def test_buyer_name_with_limited_company(self):
+        text = "购买方：北京测试有限责任公司"
+        name, _ = _extract_buyer_info(text, "")
+        self.assertEqual(name, "北京测试有限责任公司")
+
+    def test_buyer_name_from_section_only(self):
+        section = "名称：福建测试有限公司\n识别号：91110000123456789X"
+        name, tax_id = _extract_buyer_info("其他文本", section)
+        self.assertEqual(name, "福建测试有限公司")
+        self.assertEqual(tax_id, "91110000123456789X")
+
+
+# ── parse_invoice_pdf 集成补充 ──────────────
+
+class TestParseInvoicePdfExtra(unittest.TestCase):
+    def test_invoice_with_tables(self):
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "电子发票（增值税专用发票）\n发票号码：12345678901234"
+        mock_page.extract_tables.return_value = [
+            [["项目", "数量", "金额"], ["牛奶", "10", "550.00"]]
+        ]
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/fake_with_table.pdf')
+
+        self.assertEqual(result["invoice_no"], "12345678901234")
+
+    def test_multi_page_pdf(self):
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+        mock_pdf = MagicMock()
+        page1 = MagicMock()
+        page1.extract_text.return_value = "电子发票（普通发票）"
+        page1.extract_tables.return_value = []
+        page2 = MagicMock()
+        page2.extract_text.return_value = "发票号码：99999999999999\n开票日期：2025年06月01日"
+        page2.extract_tables.return_value = []
+        mock_pdf.pages = [page1, page2]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/multi.pdf')
+
+        self.assertEqual(result["invoice_type"], "普通发票")
+        self.assertEqual(result["invoice_no"], "99999999999999")
+
+    def test_all_electronic_invoice(self):
+        """全电发票类型"""
+        from unittest.mock import patch, MagicMock
+        from invoice_parser import parse_invoice_pdf
+        mock_pdf = MagicMock()
+        mock_page = MagicMock()
+        mock_page.extract_text.return_value = "全电发票\n发票号码：12345678901234"
+        mock_page.extract_tables.return_value = []
+        mock_pdf.pages = [mock_page]
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=None)
+
+        with patch('invoice_parser.pdfplumber.open', return_value=mock_pdf):
+            result = parse_invoice_pdf('/quandian.pdf')
+
+        self.assertEqual(result["invoice_type"], "全电发票")
 
 
 if __name__ == "__main__":

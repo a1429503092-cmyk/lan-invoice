@@ -65,6 +65,15 @@ class TestCopyFileToDir(unittest.TestCase):
         with open(dst, "rb") as f:
             self.assertEqual(f.read(), b"\x00\x01\x02\x03")
 
+    def test_copy_fallback_on_oserror(self):
+        """shutil.copy2 失败时回退返回原路径"""
+        src = os.path.join(self.tmp_src, "readonly.txt")
+        with open(src, "w") as f:
+            f.write("data")
+        with unittest.mock.patch("shutil.copy2", side_effect=OSError("mock fail")):
+            result = copy_file_to_dir(src, self.tmp_dst)
+            self.assertEqual(result, src)
+
     def test_multiple_duplicates_increment(self):
         src = os.path.join(self.tmp_src, "file.txt")
         with open(src, "w") as f:

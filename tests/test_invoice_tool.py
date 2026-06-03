@@ -6,10 +6,12 @@ import os
 import unittest
 import tempfile
 import shutil
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from invoice_tool import _copy_file_to_dir, InvoiceApp
+from utils import copy_file_to_dir as _copy_file_to_dir
+from invoice_tool import InvoiceApp
 
 
 # ── _safe_float 测试 ──────────────────────────
@@ -267,6 +269,70 @@ class TestFindRecordIndex(unittest.TestCase):
     def test_empty_records(self):
         self.app.records = []
         self.assertIsNone(self.app._find_record_index("11111111"))
+
+
+# ── _get_record_by_row 测试 ─────────────────
+
+class TestGetRecordByRow(unittest.TestCase):
+    def setUp(self):
+        self.app = InvoiceApp.__new__(InvoiceApp)
+        from models import Invoice
+        self.app.records = [
+            Invoice(invoice_no="AAA", file="a.pdf"),
+            Invoice(invoice_no="BBB", file="b.pdf"),
+        ]
+        self.app._shown_records = list(self.app.records)
+        # 模拟 table.item 返回 None（无匹配发票号时走 shown 回退）
+        self.app.table = MagicMock()
+        self.app.table.item = MagicMock(return_value=None)
+
+    def test_fallback_to_shown_when_no_table_match(self):
+        rec = self.app._get_record_by_row(0)
+        self.assertEqual(rec.invoice_no, "AAA")
+
+    def test_fallback_to_shown_out_of_range(self):
+        rec = self.app._get_record_by_row(99)
+        self.assertIsNone(rec)
+
+    def test_empty_shown(self):
+        self.app._shown_records = []
+        self.assertIsNone(self.app._get_record_by_row(0))
+
+
+# ── _on_parse_error 测试 ────────────────────
+
+class TestOnParseError(unittest.TestCase):
+    def test_collects_errors(self):
+        app = InvoiceApp.__new__(InvoiceApp)
+        app._parse_errors = []
+        app.status = MagicMock()
+        app._on_parse_error("测试错误")
+        self.assertEqual(app._parse_errors, ["测试错误"])
+
+    def test_multiple_errors(self):
+        app = InvoiceApp.__new__(InvoiceApp)
+        app._parse_errors = []
+        app.status = MagicMock()
+        app._on_parse_error("错误1")
+        app._on_parse_error("错误2")
+        self.assertEqual(len(app._parse_errors), 2)
+
+
+# ── _safe_float 补充 ─────────────────────────
+
+class TestSafeFloatExtra(unittest.TestCase):
+    def test_boolean_value(self):
+        self.assertEqual(InvoiceApp._safe_float(True), 1.0)
+
+    def test_whitespace_string(self):
+        self.assertEqual(InvoiceApp._safe_float("   "), 0.0)
+
+    def test_comma_in_string(self):
+        # 注意：_safe_float 不支持千分位逗号
+        self.assertEqual(InvoiceApp._safe_float("1,200.50"), 0.0)
+
+    def test_scientific_notation(self):
+        self.assertGreater(InvoiceApp._safe_float("1.5e2"), 0.0)
 
 
 if __name__ == "__main__":
