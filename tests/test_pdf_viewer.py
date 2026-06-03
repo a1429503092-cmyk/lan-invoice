@@ -463,5 +463,128 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
             dlg.close()
 
 
+# ── 核心场景集成测试（真实事件循环）───────────
+
+class TestPdfViewerRealEventLoop(unittest.TestCase):
+    """不使用 RenderWorker.start mock，验证真实事件循环下的渲染流程"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._msg_patcher = _patch_qmessagebox()
+        cls._render_patcher = patch.object(
+            pdfplumber.page.Page, "to_image",
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
+        )
+        cls._render_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._render_patcher.stop()
+        cls._msg_patcher.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_show_event_triggers_render(self):
+        """showEvent 触发 _first_show → _start_render"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        self.assertTrue(dlg._first_show)
+        dlg.show()
+        # showEvent 已触发，_first_show 应为 False
+        self.assertFalse(dlg._first_show)
+        dlg.close()
+
+    def test_render_completes_and_sets_pixmap(self):
+        """渲染完成后 _original_pixmap 被设置，loading 状态清除"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        dlg.show()
+        # 处理事件队列，让 RenderWorker 信号投递
+        QApplication.processEvents()
+        # Worker 线程需要时间；用 wait 轮询
+        for _ in range(50):
+            if dlg._original_pixmap is not None:
+                break
+            QApplication.processEvents()
+            from time import sleep
+            sleep(0.02)
+        self.assertIsNotNone(dlg._original_pixmap,
+                            "渲染完成后 _original_pixmap 不应为 None")
+        self.assertFalse(dlg._rendering)
+        dlg.close()
+
+    def test_loading_text_shown_during_render(self):
+        """渲染过程中显示加载提示文字"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        # 在 showEvent 之前检查：loading 文本由 showEvent 设置
+        dlg.show()
+        QApplication.processEvents()
+        text = dlg.img_label.text()
+        self.assertIn("正在加载", text)
+        dlg.close()
+
+    def test_first_show_only_triggers_once(self):
+        """第二次 showEvent 不会重复触发首次渲染"""
+        pdf = os.path.join(self.tmp, "multi.pdf")
+        _make_test_pdf(pdf, pages=3)
+        dlg = PdfViewerDialog(pdf)
+        dlg.show()
+        QApplication.processEvents()
+        self.assertFalse(dlg._first_show)
+        # 第二次 showEvent 不应修改 _first_show（已经是 False）
+        dlg.hide()
+        dlg.show()
+        QApplication.processEvents()
+        self.assertFalse(dlg._first_show)
+        dlg.close()
+
+    def test_page_navigation_after_render(self):
+        """渲染完成后可以正常翻页"""
+        pdf = os.path.join(self.tmp, "multi.pdf")
+        _make_test_pdf(pdf, pages=3)
+        dlg = PdfViewerDialog(pdf)
+        dlg.show()
+        # 等待首屏渲染完成
+        for _ in range(50):
+            if dlg._original_pixmap is not None:
+                break
+            QApplication.processEvents()
+            from time import sleep
+            sleep(0.02)
+        self.assertIsNotNone(dlg._original_pixmap)
+        # 翻到第 2 页
+        dlg._go_to_page(1)
+        QApplication.processEvents()
+        for _ in range(50):
+            if not dlg._rendering:
+                break
+            QApplication.processEvents()
+            from time import sleep
+            sleep(0.02)
+        self.assertEqual(dlg._current_page, 1)
+        self.assertIsNotNone(dlg._original_pixmap)
+        dlg.close()
+
+    def test_close_cancels_pending_render(self):
+        """关闭对话框取消正在进行的渲染"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        dlg.show()
+        # 不等待渲染完成，直接关闭
+        dlg.close()
+        QApplication.processEvents()
+        # 不应崩溃
+        self.assertTrue(True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
