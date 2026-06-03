@@ -12,16 +12,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from PIL import Image
 
-import pdfplumber
 from ui.dialogs.pdf_viewer import PdfViewerDialog, RenderWorker
 
 
-class MockPageImage:
-    """模拟 pdfplumber PageImage，暴露 .original (PIL Image)"""
-    def __init__(self, pil_image):
-        self.original = pil_image
+def _mock_fitz_pixmap():
+    """创建 fitz Pixmap mock，返回 100×141 的白色 RGBA 图像数据"""
+    w, h = 100, 141
+    pix = MagicMock()
+    pix.width = w
+    pix.height = h
+    pix.stride = w * 4
+    pix.samples = b'\xff' * (w * h * 4)  # 白色 RGBA
+    return pix
+
+
+def _make_fitz_patcher():
+    """patch fitz.open，返回模拟文档"""
+    mock_pix = _mock_fitz_pixmap()
+    mock_page = MagicMock()
+    mock_page.get_pixmap.return_value = mock_pix
+    mock_doc = MagicMock()
+    mock_doc.__getitem__.return_value = mock_page
+    patcher = patch("fitz.open", return_value=mock_doc)
+    return patcher, mock_pix
 
 
 # 模块级 QApplication（所有测试共享）
@@ -83,19 +97,16 @@ class TestPdfViewerBasic(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        # Mock page.to_image to avoid slow pdfplumber rendering in tests
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        # Mock fitz.open 返回模拟文档，避免真实 PDF 渲染
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
         # 让 RenderWorker.start() 同步执行 run()，避免测试中多线程问题
         cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
         cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
@@ -195,17 +206,14 @@ class TestPdfViewerKeyboard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
         cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
         cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
@@ -256,17 +264,14 @@ class TestPdfViewerKeyButtons(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
         cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
         cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
@@ -310,17 +315,14 @@ class TestPdfViewerZoom(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
         cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
         cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
@@ -371,17 +373,14 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
         cls._sync_patcher = patch.object(RenderWorker, 'start', lambda self: self.run())
         cls._sync_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._sync_patcher.stop()
         cls._msg_patcher.stop()
 
@@ -454,9 +453,8 @@ class TestPdfViewerEdgeCases(unittest.TestCase):
         """测试 27: 渲染失败 → 提示用系统打开"""
         pdf = os.path.join(self.tmp, "single.pdf")
         _make_test_pdf(pdf, pages=1)
-        # 让 to_image 抛出异常模拟渲染失败
-        with patch.object(pdfplumber.page.Page, "to_image",
-                          side_effect=Exception("render error")):
+        # 让 fitz.get_pixmap 抛出异常模拟渲染失败
+        with patch("fitz.open", side_effect=Exception("render error")):
             dlg = PdfViewerDialog(pdf)
             # 渲染异常不会使对话框崩溃
             self.assertTrue(dlg.isVisible() or not dlg.isVisible())
@@ -471,15 +469,12 @@ class TestPdfViewerRealEventLoop(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._msg_patcher = _patch_qmessagebox()
-        cls._render_patcher = patch.object(
-            pdfplumber.page.Page, "to_image",
-            return_value=MockPageImage(Image.new("RGB", (100, 141))),
-        )
-        cls._render_patcher.start()
+        cls._fitz_patcher, _ = _make_fitz_patcher()
+        cls._fitz_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
-        cls._render_patcher.stop()
+        cls._fitz_patcher.stop()
         cls._msg_patcher.stop()
 
     def setUp(self):

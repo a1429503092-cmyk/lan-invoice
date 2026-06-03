@@ -1493,6 +1493,13 @@ class InvoiceApp(QMainWindow):
 # ─────────────────────────────────────────────
 
 def main():
+    # 单实例检测
+    from PyQt5.QtCore import QSharedMemory
+    _singleton = QSharedMemory("lan-invoice-app")
+    if not _singleton.create(1) and _singleton.error() == QSharedMemory.AlreadyExists:
+        QMessageBox.warning(None, "提示", "发票归档工具已在运行中。\n请查看任务栏或系统托盘。")
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     app.setApplicationName("发票归档")
     app.setStyle("Fusion")

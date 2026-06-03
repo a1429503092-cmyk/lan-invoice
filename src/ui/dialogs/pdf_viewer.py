@@ -16,24 +16,27 @@ from ui.theme import DARK_SURFACE, DARK_TEXT, DIALOG_QSS_DARK
 
 
 class RenderWorker(QThread):
-    """后台渲染 PDF 页面，传 QImage 到主线程（QPixmap 不能在非 GUI 线程创建）"""
+    """后台渲染 PDF 页面为图片（PyMuPDF），传 QImage 到主线程"""
     finished = pyqtSignal(QImage, str)  # image, error_message
 
-    def __init__(self, page, render_dpi: int = 150):
+    def __init__(self, pdf_path: str, page_index: int, render_dpi: int = 72):
         super().__init__()
-        self.page = page
+        self.pdf_path = pdf_path
+        self.page_index = page_index
         self.render_dpi = render_dpi
 
     def run(self):
+        import fitz
         try:
-            rotation = getattr(self.page, 'rotation', 0)
-            img = self.page.to_image(resolution=self.render_dpi)
-            pil_img = img.original
-            if rotation:
-                pil_img = pil_img.rotate(-rotation, expand=True)
-            pil_img = pil_img.convert("RGBA")
-            data = pil_img.tobytes("raw", "RGBA")
-            qim = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+            doc = fitz.open(self.pdf_path)
+            page = doc[self.page_index]
+            # DPI → zoom 换算: zoom = dpi / 72
+            zoom = self.render_dpi / 72.0
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat)
+            qim = QImage(pix.samples, pix.width, pix.height, pix.stride,
+                         QImage.Format_RGBA8888)
+            doc.close()
             self.finished.emit(qim, "")
         except Exception as e:
             self.finished.emit(QImage(), str(e))
@@ -105,8 +108,7 @@ class PdfViewerDialog(QDialog):
             return
         self._rendering = True
         self._set_loading(True)
-        page = self._pages[self._current_page]
-        self._worker = RenderWorker(page, self._render_dpi)
+        self._worker = RenderWorker(self.pdf_path, self._current_page, self._render_dpi)
         self._worker.finished.connect(self._on_render_done)
         self._worker.start()
 
