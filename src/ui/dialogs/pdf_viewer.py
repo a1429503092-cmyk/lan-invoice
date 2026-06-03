@@ -27,16 +27,19 @@ class RenderWorker(QThread):
 
     def run(self):
         import fitz
+        from PIL import Image as PILImage
         try:
             doc = fitz.open(self.pdf_path)
             page = doc[self.page_index]
-            # DPI → zoom 换算: zoom = dpi / 72
             zoom = self.render_dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
-            qim = QImage(pix.samples, pix.width, pix.height, pix.stride,
-                         QImage.Format_RGBA8888)
+            # fitz → PIL → QImage，避免色域(BGRA vs RGBA)和内存释放问题
+            pil_img = PILImage.frombytes("RGBA", (pix.width, pix.height),
+                                         bytes(pix.samples))
             doc.close()
+            data = pil_img.tobytes("raw", "RGBA")
+            qim = QImage(data, pix.width, pix.height, QImage.Format_RGBA8888)
             self.finished.emit(qim, "")
         except Exception as e:
             self.finished.emit(QImage(), str(e))
