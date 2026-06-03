@@ -27,6 +27,19 @@ class PdfViewerDialog(QDialog):
         self._original_pixmap = None
         self._pdf = None
         self._load_error = None
+        self._render_dpi = 150
+
+        # 检测系统 DPI 缩放：4K 屏幕自动提升渲染分辨率
+        try:
+            app = QApplication.instance()
+            if app:
+                screen = app.primaryScreen()
+                if screen:
+                    ratio = screen.devicePixelRatio()
+                    if ratio >= 2.0:
+                        self._render_dpi = 300
+        except Exception:
+            pass
 
         self.setWindowTitle(os.path.basename(pdf_path))
         self.resize(900, 700)
@@ -42,6 +55,7 @@ class PdfViewerDialog(QDialog):
     # ── 加载 PDF ─────────────────────────────────
 
     def _load_pdf(self):
+        """加载 PDF，处理不存在/损坏/加密"""
         try:
             self._pdf = pdfplumber.open(self.pdf_path)
             self._pages = self._pdf.pages
@@ -49,10 +63,29 @@ class PdfViewerDialog(QDialog):
             self._load_error = "文件不存在"
             QMessageBox.warning(self, "错误",
                                 f"PDF 文件不存在：\n{self.pdf_path}")
-        except Exception:
-            self._load_error = "文件损坏或加密"
-            QMessageBox.warning(self, "错误",
-                                f"无法打开 PDF 文件，文件可能已损坏或加密：\n{self.pdf_path}")
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "password" in err_msg:
+                from PyQt5.QtWidgets import QInputDialog, QLineEdit
+                pw, ok = QInputDialog.getText(
+                    self, "密码保护", "此 PDF 需要密码才能打开：",
+                    text="", echo=QLineEdit.Password)
+                if ok and pw:
+                    try:
+                        self._pdf = pdfplumber.open(self.pdf_path, password=pw)
+                        self._pages = self._pdf.pages
+                        return
+                    except Exception:
+                        self._load_error = "密码错误"
+                        QMessageBox.warning(self, "密码错误", "密码不正确，请用「系统打开」查看。")
+                else:
+                    self._load_error = "密码取消"
+                    QMessageBox.information(self, "需要密码", "请用「系统打开」按钮在外部程序中查看。")
+            else:
+                self._load_error = "文件损坏或加密"
+                QMessageBox.warning(self, "错误",
+                                    f"无法打开 PDF 文件，文件可能已损坏或加密：\n{self.pdf_path}")
+            self._pages = []
 
     # ── 构建 UI ──────────────────────────────────
 
@@ -162,13 +195,26 @@ class PdfViewerDialog(QDialog):
     def _render_current(self):
         if not self._pages or self._load_error:
             return
-        page = self._pages[self._current_page]
-        img = page.to_image(resolution=150, antialias=True)
-        img = img.convert("RGBA")
-        data = img.tobytes("raw", "RGBA")
-        qim = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
-        self._original_pixmap = QPixmap.fromImage(qim)
-        self._apply_zoom()
+        try:
+            page = self._pages[self._current_page]
+            # 检测页面旋转
+            rotation = getattr(page, 'rotation', 0)
+            img = page.to_image(resolution=self._render_dpi, antialias=True)
+
+            if rotation:
+                pil_img = img.original.rotate(-rotation, expand=True)
+            else:
+                pil_img = img.original
+
+            pil_img = pil_img.convert("RGBA")
+            data = pil_img.tobytes("raw", "RGBA")
+            qim = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
+            self._original_pixmap = QPixmap.fromImage(qim)
+            self._apply_zoom()
+        except Exception:
+            self._load_error = "渲染失败"
+            QMessageBox.warning(self, "渲染失败",
+                                "PDF 渲染失败，请用「系统打开」查看。")
 
     def _apply_zoom(self):
         if self._original_pixmap is None:

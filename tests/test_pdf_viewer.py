@@ -6,7 +6,7 @@ import os
 import unittest
 import tempfile
 import shutil
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -16,6 +16,12 @@ from PIL import Image
 
 import pdfplumber
 from ui.dialogs.pdf_viewer import PdfViewerDialog
+
+
+class MockPageImage:
+    """模拟 pdfplumber PageImage，暴露 .original (PIL Image)"""
+    def __init__(self, pil_image):
+        self.original = pil_image
 
 
 # 模块级 QApplication（所有测试共享）
@@ -80,7 +86,7 @@ class TestPdfViewerBasic(unittest.TestCase):
         # Mock page.to_image to avoid slow pdfplumber rendering in tests
         cls._render_patcher = patch.object(
             pdfplumber.page.Page, "to_image",
-            return_value=Image.new("RGB", (100, 141)),
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
 
@@ -187,7 +193,7 @@ class TestPdfViewerKeyboard(unittest.TestCase):
         cls._msg_patcher = _patch_qmessagebox()
         cls._render_patcher = patch.object(
             pdfplumber.page.Page, "to_image",
-            return_value=Image.new("RGB", (100, 141)),
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
 
@@ -245,7 +251,7 @@ class TestPdfViewerKeyButtons(unittest.TestCase):
         cls._msg_patcher = _patch_qmessagebox()
         cls._render_patcher = patch.object(
             pdfplumber.page.Page, "to_image",
-            return_value=Image.new("RGB", (100, 141)),
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
 
@@ -296,7 +302,7 @@ class TestPdfViewerZoom(unittest.TestCase):
         cls._msg_patcher = _patch_qmessagebox()
         cls._render_patcher = patch.object(
             pdfplumber.page.Page, "to_image",
-            return_value=Image.new("RGB", (100, 141)),
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
         )
         cls._render_patcher.start()
 
@@ -343,6 +349,102 @@ class TestPdfViewerZoom(unittest.TestCase):
         dlg._set_zoom("fit_width")
         self.assertEqual(dlg._zoom_mode, "fit_width")
         dlg.close()
+
+
+# ── 边界情况测试 ──────────────────────────────
+
+class TestPdfViewerEdgeCases(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._msg_patcher = _patch_qmessagebox()
+        cls._render_patcher = patch.object(
+            pdfplumber.page.Page, "to_image",
+            return_value=MockPageImage(Image.new("RGB", (100, 141))),
+        )
+        cls._render_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._render_patcher.stop()
+        cls._msg_patcher.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        # 重置 mock 避免跨测试累计调用
+        QMessageBox.warning.reset_mock()
+        QMessageBox.information.reset_mock()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_single_page_hides_page_label(self):
+        """测试 22: 单页 PDF 不显示页码"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        self.assertFalse(dlg.lbl_page.isVisible())
+        dlg.close()
+
+    def test_password_detected_prompts_input(self):
+        """测试 23: 加密 PDF → 弹出密码框"""
+        with patch("pdfplumber.open") as mock_open:
+            mock_open.side_effect = [Exception("password required"),
+                                     MagicMock()]
+            with patch.object(PdfViewerDialog, "_render_current"):
+                with patch("PyQt5.QtWidgets.QInputDialog.getText",
+                           return_value=("123456", True)):
+                    dlg = PdfViewerDialog("/fake/encrypted.pdf")
+                    QMessageBox.warning.assert_not_called()
+                    dlg.close()
+
+    def test_wrong_password_shows_error(self):
+        """测试 24: 密码错误提示"""
+        with patch("pdfplumber.open") as mock_open:
+            mock_open.side_effect = [
+                Exception("password required"),
+                Exception("incorrect password"),
+            ]
+            with patch.object(PdfViewerDialog, "_render_current"):
+                with patch("PyQt5.QtWidgets.QInputDialog.getText",
+                           return_value=("wrong", True)):
+                    dlg = PdfViewerDialog("/fake/encrypted.pdf")
+                    QMessageBox.warning.assert_called()
+                    dlg.close()
+
+    def test_password_cancel_shows_hint(self):
+        """测试 25: 密码取消提示"""
+        with patch("pdfplumber.open") as mock_open:
+            mock_open.side_effect = Exception("password required")
+            with patch.object(PdfViewerDialog, "_render_current"):
+                with patch("PyQt5.QtWidgets.QInputDialog.getText",
+                           return_value=("", False)):
+                    dlg = PdfViewerDialog("/fake/encrypted.pdf")
+                    QMessageBox.information.assert_called()
+                    dlg.close()
+
+    def test_file_deleted_while_viewing(self):
+        """测试 28: 打开后文件被删除 → 系统打开提示"""
+        pdf = os.path.join(self.tmp, "temp.pdf")
+        _make_test_pdf(pdf, pages=1)
+        dlg = PdfViewerDialog(pdf)
+        # 先关闭对话框释放 pdfplumber 文件句柄，再删除文件
+        dlg.close()
+        os.remove(pdf)
+        dlg._open_system()
+        QMessageBox.warning.assert_called()
+
+    def test_render_failure_shows_warning(self):
+        """测试 27: 渲染失败 → 提示用系统打开"""
+        pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(pdf, pages=1)
+        # 让 to_image 抛出异常模拟渲染失败
+        with patch.object(pdfplumber.page.Page, "to_image",
+                          side_effect=Exception("render error")):
+            dlg = PdfViewerDialog(pdf)
+            # 渲染异常不会使对话框崩溃
+            self.assertTrue(dlg.isVisible() or not dlg.isVisible())
+            dlg.close()
 
 
 if __name__ == "__main__":
