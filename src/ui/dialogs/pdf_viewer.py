@@ -33,13 +33,14 @@ class RenderWorker(QThread):
             page = doc[self.page_index]
             zoom = self.render_dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            # fitz → PIL → QImage，避免色域(BGRA vs RGBA)和内存释放问题
-            pil_img = PILImage.frombytes("RGBA", (pix.width, pix.height),
-                                         bytes(pix.samples))
+            # 强制 RGBA 输出，避免 RGB(3ch) vs RGBA(4ch) 不匹配
+            pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+            pil_img = PILImage.frombuffer("RGB", (pix.width, pix.height),
+                                          bytes(pix.samples), "raw", "RGB", 0, 1)
             doc.close()
-            data = pil_img.tobytes("raw", "RGBA")
-            qim = QImage(data, pix.width, pix.height, QImage.Format_RGBA8888)
+            data = pil_img.tobytes("raw", "RGB")
+            qim = QImage(data, pix.width, pix.height, 3 * pix.width,
+                         QImage.Format_RGB888)
             self.finished.emit(qim, "")
         except Exception as e:
             self.finished.emit(QImage(), str(e))

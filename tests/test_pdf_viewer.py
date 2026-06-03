@@ -17,13 +17,12 @@ from ui.dialogs.pdf_viewer import PdfViewerDialog, RenderWorker
 
 
 def _mock_fitz_pixmap():
-    """创建 fitz Pixmap mock，返回 100×141 的白色 RGBA 图像数据"""
+    """创建 fitz Pixmap mock，返回 100×141 的白色 RGB 图像数据"""
     w, h = 100, 141
     pix = MagicMock()
     pix.width = w
     pix.height = h
-    pix.stride = w * 4
-    pix.samples = b'\xff' * (w * h * 4)  # 白色 RGBA
+    pix.samples = b'\xff' * (w * h * 3)  # 白色 RGB，每像素 3 字节
     return pix
 
 
