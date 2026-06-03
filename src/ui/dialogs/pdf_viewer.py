@@ -16,8 +16,8 @@ from ui.theme import DARK_SURFACE, DARK_TEXT, DIALOG_QSS_DARK
 
 
 class RenderWorker(QThread):
-    """后台渲染 PDF 页面为 QPixmap，避免阻塞 UI"""
-    finished = pyqtSignal(QPixmap, str)  # pixmap, error_message
+    """后台渲染 PDF 页面，传 QImage 到主线程（QPixmap 不能在非 GUI 线程创建）"""
+    finished = pyqtSignal(QImage, str)  # image, error_message
 
     def __init__(self, page, render_dpi: int = 150):
         super().__init__()
@@ -34,10 +34,9 @@ class RenderWorker(QThread):
             pil_img = pil_img.convert("RGBA")
             data = pil_img.tobytes("raw", "RGBA")
             qim = QImage(data, pil_img.width, pil_img.height, QImage.Format_RGBA8888)
-            pix = QPixmap.fromImage(qim)
-            self.finished.emit(pix, "")
+            self.finished.emit(qim, "")
         except Exception as e:
-            self.finished.emit(QPixmap(), str(e))
+            self.finished.emit(QImage(), str(e))
 
 
 class PdfViewerDialog(QDialog):
@@ -123,7 +122,7 @@ class PdfViewerDialog(QDialog):
         self._worker.finished.connect(self._on_render_done)
         self._worker.start()
 
-    def _on_render_done(self, pixmap: QPixmap, error: str):
+    def _on_render_done(self, qimage: QImage, error: str):
         self._rendering = False
         self._worker = None
         self._set_loading(False)
@@ -134,7 +133,8 @@ class PdfViewerDialog(QDialog):
                                 f"请用「系统打开」查看完整内容。\n\n{error}")
             return
 
-        self._original_pixmap = pixmap
+        # 在主线程将 QImage 转为 QPixmap（Qt 要求 QPixmap 在主线程创建）
+        self._original_pixmap = QPixmap.fromImage(qimage)
         self._apply_zoom()
 
     def _set_loading(self, loading: bool):
