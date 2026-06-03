@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PIL import Image
 
@@ -44,6 +45,29 @@ def _patch_qmessagebox():
     patch.object(QMessageBox, "information", return_value=None).start()
     patch.object(QMessageBox, "critical", return_value=None).start()
     return patcher
+
+
+class MockKeyEvent:
+    """模拟 QKeyEvent 用于 keyPressEvent 测试"""
+
+    def __init__(self, key, modifiers=None):
+        self._key = key
+        self._mod = modifiers if modifiers is not None else Qt.NoModifier
+
+    def key(self):
+        return self._key
+
+    def modifiers(self):
+        return self._mod
+
+    def isAccepted(self):
+        return False
+
+    def accept(self):
+        pass
+
+    def ignore(self):
+        pass
 
 
 # ── PdfViewerDialog 基本功能测试 ─────────────
@@ -151,6 +175,173 @@ class TestPdfViewerBasic(unittest.TestCase):
 
         dlg = PdfViewerDialog(corrupt)
         QMessageBox.warning.assert_called()
+        dlg.close()
+
+
+# ── 键盘导航测试 ────────────────────────────
+
+class TestPdfViewerKeyboard(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._msg_patcher = _patch_qmessagebox()
+        cls._render_patcher = patch.object(
+            pdfplumber.page.Page, "to_image",
+            return_value=Image.new("RGB", (100, 141)),
+        )
+        cls._render_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._render_patcher.stop()
+        cls._msg_patcher.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.pdf = os.path.join(self.tmp, "multi.pdf")
+        _make_test_pdf(self.pdf, pages=3)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_arrow_right_next_page(self):
+        """测试 7: → 键翻到下一页"""
+        dlg = PdfViewerDialog(self.pdf)
+        old = dlg._current_page
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Right))
+        self.assertEqual(dlg._current_page, old + 1)
+        dlg.close()
+
+    def test_arrow_left_prev_page(self):
+        """测试 8: ← 键翻到上一页"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg._go_to_page(1)
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Left))
+        self.assertEqual(dlg._current_page, 0)
+        dlg.close()
+
+    def test_arrow_left_at_boundary_noop(self):
+        """测试 9: 首页按 ← 不变"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Left))
+        self.assertEqual(dlg._current_page, 0)
+        dlg.close()
+
+    def test_arrow_right_at_boundary_noop(self):
+        """测试 10: 末页按 → 不变"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg._go_to_page(2)
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Right))
+        self.assertEqual(dlg._current_page, 2)
+        dlg.close()
+
+
+# ── 功能键测试 ─────────────────────────────
+
+class TestPdfViewerKeyButtons(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._msg_patcher = _patch_qmessagebox()
+        cls._render_patcher = patch.object(
+            pdfplumber.page.Page, "to_image",
+            return_value=Image.new("RGB", (100, 141)),
+        )
+        cls._render_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._render_patcher.stop()
+        cls._msg_patcher.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.pdf = os.path.join(self.tmp, "multi.pdf")
+        _make_test_pdf(self.pdf, pages=3)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_escape_closes_dialog(self):
+        """测试 11: Esc 关闭对话框"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg.show()
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Escape))
+        # accept() 后对话框不可见
+        self.assertTrue(dlg.isHidden())
+        dlg.close()
+
+    def test_home_jumps_to_first_page(self):
+        """测试 12: Home 跳首页"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg._go_to_page(2)
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_Home))
+        self.assertEqual(dlg._current_page, 0)
+        dlg.close()
+
+    def test_end_jumps_to_last_page(self):
+        """测试 13: End 跳末页"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg.keyPressEvent(MockKeyEvent(Qt.Key_End))
+        self.assertEqual(dlg._current_page, 2)
+        dlg.close()
+
+
+# ── 缩放模式测试 ───────────────────────────
+
+class TestPdfViewerZoom(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._msg_patcher = _patch_qmessagebox()
+        cls._render_patcher = patch.object(
+            pdfplumber.page.Page, "to_image",
+            return_value=Image.new("RGB", (100, 141)),
+        )
+        cls._render_patcher.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._render_patcher.stop()
+        cls._msg_patcher.stop()
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.pdf = os.path.join(self.tmp, "single.pdf")
+        _make_test_pdf(self.pdf, pages=1)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_default_zoom_is_fit_width(self):
+        """测试 14: 默认缩放模式 = fit_width"""
+        dlg = PdfViewerDialog(self.pdf)
+        self.assertEqual(dlg._zoom_mode, "fit_width")
+        dlg.close()
+
+    def test_btn_fit_page_switches_mode(self):
+        """测试 15: 点击适应页面"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg.btn_fit_p.click()
+        self.assertEqual(dlg._zoom_mode, "fit_page")
+        dlg.close()
+
+    def test_btn_1to1_switches_mode(self):
+        """测试 16: 点击 100%"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg.btn_1to1.click()
+        self.assertEqual(dlg._zoom_mode, "1:1")
+        dlg.close()
+
+    def test_zoom_mode_cycle(self):
+        """测试 17: 三种模式循环切换"""
+        dlg = PdfViewerDialog(self.pdf)
+        dlg._set_zoom("fit_page")
+        self.assertEqual(dlg._zoom_mode, "fit_page")
+        dlg._set_zoom("1:1")
+        self.assertEqual(dlg._zoom_mode, "1:1")
+        dlg._set_zoom("fit_width")
+        self.assertEqual(dlg._zoom_mode, "fit_width")
         dlg.close()
 
 
