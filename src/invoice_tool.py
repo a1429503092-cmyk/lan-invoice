@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-发票归档 v4.0
+发票归档
 功能：发票PDF识别、付款截图管理、合同附件管理、按月筛选、导出Excel
 """
 
@@ -21,16 +21,21 @@ from PyQt5.QtWidgets import (
     QProgressBar, QAbstractItemView, QDialog,
     QComboBox, QMenu, QInputDialog, QSizePolicy
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QMimeData, QUrl, QEvent
+from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
 
-from invoice_parser import parse_invoice_pdf
 from dialogs import (ImageViewerDialog, InvoiceManagerDialog,
                      ContractManagerDialog, SettingsDialog, DeleteConfirmDialog)
 from worker import ParseWorker
-from utils import copy_file_to_dir as _copy_file_to_dir
 from filters import (record_matches_filter, get_available_years,
                      get_available_inv_types, get_available_sellers)
+from models import Invoice
+from repository import InvoiceRepository
+from services.invoice_service import InvoiceService
+from ui.icons import get as get_icon
+from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
+                       ACCENT, RED, GREEN, TEXT, TEXT_SEC, TEXT_DIM,
+                       MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
 
 
 # 表格列定义
@@ -45,6 +50,8 @@ CONTRACT_EXTS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls'}  # 合同支持格式
 
 
 class InvoiceApp(QMainWindow):
+    APP_VERSION = "5.1"
+
     def __init__(self):
         super().__init__()
         self.records = []
@@ -63,12 +70,18 @@ class InvoiceApp(QMainWindow):
         os.makedirs(self._screenshot_dir, exist_ok=True)
         os.makedirs(self._contract_dir,   exist_ok=True)
 
+        self._repo = InvoiceRepository(self._data_file)
+        self._svc  = InvoiceService(self._repo, self._screenshot_dir,
+                                     self._contract_dir,
+                                     os.path.join(self._data_dir, "invoices"))
+
         self._filter_year        = None
         self._filter_month       = None
         self._filter_inv_type    = None   # 发票类型筛选
         self._filter_seller      = None   # 销售方名称筛选
         self._filter_company     = ""     # 企业号搜索（模糊匹配）
         self._filter_buyer       = ""     # 购买方名称/税号搜索（模糊匹配）
+        self._show_advanced_filter = False
 
         # 拖拽模式：'pdf'=导入发票, 'screenshot'=添加截图, 'contract'=添加合同
         # 通过键盘修饰键区分：Alt=截图, Shift=合同, 无修饰=PDF
@@ -78,11 +91,16 @@ class InvoiceApp(QMainWindow):
         self._init_ui()
         self.setAcceptDrops(True)
         self._load_data()
+        QTimer.singleShot(500, self._check_desktop_shortcut)
 
     # ── 记录辅助方法 ────────────────────────────
 
-    def _init_record_fields(self, data: dict):
+    def _init_record_fields(self, data):
         """统一初始化记录字段默认值；红票金额转负数"""
+        if isinstance(data, Invoice):
+            data.ensure_defaults()
+            return
+        # 兼容旧 dict（逐步淘汰）
         for field in ("pdf_path", "invoice_type", "seller_name", "remark"):
             data.setdefault(field, "")
         data.setdefault("screenshots", [])
@@ -105,38 +123,44 @@ class InvoiceApp(QMainWindow):
 
     # ── UI 构建 ─────────────────────────────────
     def _init_ui(self):
-        self.setWindowTitle("发票归档 v4.0")
+        self.setWindowTitle(f"发票归档 v{self.APP_VERSION}")
+        self._set_app_icon()
         self.resize(1480, 820)
         self.setMinimumSize(1000, 640)
 
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(10, 10, 10, 6)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(12, 12, 12, 8)
+        main_layout.setSpacing(12)
 
         # ── 工具栏第一行 ──────────────────────────
         top_bar = QHBoxLayout()
         top_bar.setSpacing(8)
 
-        self.btn_open = QPushButton("📂 导入发票PDF")
+        self.btn_open = QPushButton(" 导入发票PDF")
+        self.btn_open.setIcon(get_icon('folder'))
         self.btn_open.setFixedHeight(36)
         self.btn_open.setToolTip("选择一个或多个PDF发票文件（也可直接拖拽PDF到窗口）")
         self.btn_open.clicked.connect(self.open_files)
 
-        self.btn_clear = QPushButton("🗑 清空列表")
+        self.btn_clear = QPushButton(" 清空列表")
+        self.btn_clear.setIcon(get_icon('clear'))
         self.btn_clear.setFixedHeight(36)
         self.btn_clear.clicked.connect(self.clear_records)
 
-        self.btn_settings = QPushButton("⚙️ 设置")
+        self.btn_settings = QPushButton(" 设置")
+        self.btn_settings.setIcon(get_icon('settings'))
         self.btn_settings.setFixedHeight(36)
         self.btn_settings.setToolTip("数据目录设置 / 软件另存")
         self.btn_settings.clicked.connect(self._open_settings)
 
-        self.btn_export = QPushButton("📊 导出 Excel")
+        self.btn_export = QPushButton(" 导出 Excel")
+        self.btn_export.setIcon(get_icon('export'))
         self.btn_export.setFixedHeight(36)
         self.btn_export.setStyleSheet(
-            "background:#1E6FBF; color:white; font-weight:bold; border-radius:4px;")
+            f"background:{ACCENT}; color:white; font-weight:bold; border:none;")
+        self.btn_export.setCursor(Qt.PointingHandCursor)
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
@@ -144,8 +168,8 @@ class InvoiceApp(QMainWindow):
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
 
-        lbl = QLabel("企业号（手动）：")
-        lbl.setFixedWidth(110)
+        lbl = QLabel("企业号")
+        lbl.setFixedWidth(50)
         self.edit_company = QLineEdit()
         self.edit_company.setPlaceholderText("输入后新导入发票自动填入")
         self.edit_company.setMinimumWidth(120)
@@ -165,14 +189,14 @@ class InvoiceApp(QMainWindow):
 
         # ── 工具栏第二行：多维筛选 ───────────────
         filter_bar = QHBoxLayout()
-        filter_bar.setSpacing(6)
+        filter_bar.setSpacing(12)
 
-        lbl_filter = QLabel("🔍 筛选：")
-        lbl_filter.setStyleSheet("font-size:13px; color:#333;")
+        lbl_filter = QLabel("筛选：")
+        lbl_filter.setStyleSheet(f"font-size:{FS}; font-weight:bold; color:{TEXT};")
 
         # 年份
         lbl_y = QLabel("年份")
-        lbl_y.setStyleSheet("font-size:12px; color:#666;")
+        lbl_y.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
         self.combo_year = QComboBox()
         self.combo_year.setFixedWidth(90)
         self.combo_year.setFixedHeight(30)
@@ -180,7 +204,7 @@ class InvoiceApp(QMainWindow):
 
         # 月份
         lbl_m = QLabel("月份")
-        lbl_m.setStyleSheet("font-size:12px; color:#666;")
+        lbl_m.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
         self.combo_month = QComboBox()
         self.combo_month.setFixedWidth(80)
         self.combo_month.setFixedHeight(30)
@@ -188,43 +212,12 @@ class InvoiceApp(QMainWindow):
         for i in range(1, 13):
             self.combo_month.addItem(f"{i:02d} 月", i)
 
-        # 发票类型
-        lbl_type = QLabel("发票类型")
-        lbl_type.setStyleSheet("font-size:12px; color:#666;")
-        self.combo_inv_type = QComboBox()
-        self.combo_inv_type.setMinimumWidth(100)
-        self.combo_inv_type.setFixedHeight(30)
-        self.combo_inv_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.combo_inv_type.addItem("全部", None)
-
-        # 销售方名称
-        lbl_seller = QLabel("销售方")
-        lbl_seller.setStyleSheet("font-size:12px; color:#666;")
-        self.combo_seller = QComboBox()
-        self.combo_seller.setMinimumWidth(120)
-        self.combo_seller.setFixedHeight(30)
-        self.combo_seller.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.combo_seller.addItem("全部", None)
-
-        # 购买方名称/税号搜索
-        lbl_buyer_search = QLabel("购买方")
-        lbl_buyer_search.setStyleSheet("font-size:12px; color:#666;")
-        self.edit_buyer_search = QLineEdit()
-        self.edit_buyer_search.setPlaceholderText("名称或税号")
-        self.edit_buyer_search.setMinimumWidth(120)
-        self.edit_buyer_search.setFixedHeight(30)
-        # 回车直接触发筛选
-        self.edit_buyer_search.returnPressed.connect(self._apply_filter)
-
-        # 企业号搜索
-        lbl_company_search = QLabel("企业号")
-        lbl_company_search.setStyleSheet("font-size:12px; color:#666;")
-        self.edit_company_search = QLineEdit()
-        self.edit_company_search.setPlaceholderText("输入企业号搜索")
-        self.edit_company_search.setMinimumWidth(100)
-        self.edit_company_search.setFixedHeight(30)
-        # 回车直接触发筛选
-        self.edit_company_search.returnPressed.connect(self._apply_filter)
+        # 高级筛选切换按钮
+        self.btn_advanced_filter = QPushButton("▸ 高级筛选")
+        self.btn_advanced_filter.setFixedHeight(30)
+        self.btn_advanced_filter.setStyleSheet(f"font-size:{FS_SM}; color:{ACCENT}; border:none; background:transparent;")
+        self.btn_advanced_filter.setCursor(Qt.PointingHandCursor)
+        self.btn_advanced_filter.clicked.connect(self._toggle_advanced_filter)
 
         self.btn_filter = QPushButton("筛 选")
         self.btn_filter.setFixedHeight(30)
@@ -237,45 +230,89 @@ class InvoiceApp(QMainWindow):
         self.btn_reset.clicked.connect(self._reset_filter)
 
         self.lbl_filter_hint = QLabel("")
-        self.lbl_filter_hint.setStyleSheet("color:#E06020; font-size:12px;")
+        self.lbl_filter_hint.setStyleSheet(f"color:{ACCENT}; font-size:{FS_SM}; font-weight:bold;")
 
         filter_bar.addWidget(lbl_filter)
         filter_bar.addWidget(lbl_y)
         filter_bar.addWidget(self.combo_year)
         filter_bar.addWidget(lbl_m)
         filter_bar.addWidget(self.combo_month)
-        filter_bar.addWidget(lbl_type)
-        filter_bar.addWidget(self.combo_inv_type, 1)
-        filter_bar.addWidget(lbl_seller)
-        filter_bar.addWidget(self.combo_seller, 1)
-        filter_bar.addWidget(lbl_buyer_search)
-        filter_bar.addWidget(self.edit_buyer_search, 2)
-        filter_bar.addWidget(lbl_company_search)
-        filter_bar.addWidget(self.edit_company_search, 2)
+        filter_bar.addWidget(self.btn_advanced_filter)
+        filter_bar.addStretch()
         filter_bar.addWidget(self.btn_filter)
         filter_bar.addWidget(self.btn_reset)
         filter_bar.addWidget(self.lbl_filter_hint)
-        filter_bar.addStretch()
         main_layout.addLayout(filter_bar)
+
+        # ── 高级筛选面板（默认隐藏）───────────────
+        self._advanced_filter_frame = QFrame()
+        self._advanced_filter_frame.setVisible(False)
+        adv_layout = QHBoxLayout(self._advanced_filter_frame)
+        adv_layout.setContentsMargins(0, 0, 0, 0)
+        adv_layout.setSpacing(10)
+
+        # 发票类型
+        lbl_type = QLabel("发票类型")
+        lbl_type.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        self.combo_inv_type = QComboBox()
+        self.combo_inv_type.setMinimumWidth(100)
+        self.combo_inv_type.setFixedHeight(30)
+        self.combo_inv_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_inv_type.addItem("全部", None)
+
+        # 销售方名称
+        lbl_seller = QLabel("销售方")
+        lbl_seller.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        self.combo_seller = QComboBox()
+        self.combo_seller.setMinimumWidth(120)
+        self.combo_seller.setFixedHeight(30)
+        self.combo_seller.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.combo_seller.addItem("全部", None)
+
+        # 购买方名称/税号搜索
+        lbl_buyer_search = QLabel("购买方")
+        lbl_buyer_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        self.edit_buyer_search = QLineEdit()
+        self.edit_buyer_search.setPlaceholderText("名称或税号")
+        self.edit_buyer_search.setMinimumWidth(120)
+        self.edit_buyer_search.setFixedHeight(30)
+        self.edit_buyer_search.returnPressed.connect(self._apply_filter)
+
+        # 企业号搜索
+        lbl_company_search = QLabel("企业号")
+        lbl_company_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        self.edit_company_search = QLineEdit()
+        self.edit_company_search.setPlaceholderText("输入企业号搜索")
+        self.edit_company_search.setMinimumWidth(100)
+        self.edit_company_search.setFixedHeight(30)
+        self.edit_company_search.returnPressed.connect(self._apply_filter)
+
+        adv_layout.addWidget(lbl_type)
+        adv_layout.addWidget(self.combo_inv_type, 1)
+        adv_layout.addWidget(lbl_seller)
+        adv_layout.addWidget(self.combo_seller, 1)
+        adv_layout.addWidget(lbl_buyer_search)
+        adv_layout.addWidget(self.edit_buyer_search, 2)
+        adv_layout.addWidget(lbl_company_search)
+        adv_layout.addWidget(self.edit_company_search, 2)
+        adv_layout.addStretch()
+        main_layout.addWidget(self._advanced_filter_frame)
 
         # ── 进度条 ───────────────────────────────
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet(
-            "QProgressBar { border:none; background:#ddd; border-radius:3px; }"
-            "QProgressBar::chunk { background:#1E6FBF; border-radius:3px; }")
+        self.progress_bar.setStyleSheet(PROGRESS_QSS)
         self.progress_bar.setVisible(False)
         main_layout.addWidget(self.progress_bar)
 
         # ── 统计汇总栏 ───────────────────────────
         self.summary_frame = QFrame()
         self.summary_frame.setFrameShape(QFrame.StyledPanel)
-        self.summary_frame.setStyleSheet(
-            "QFrame { background:#F0F7FF; border:1px solid #B8D4F0; border-radius:5px; }")
+        self.summary_frame.setStyleSheet(SUMMARY_FRAME_QSS)
         sum_layout = QHBoxLayout(self.summary_frame)
-        sum_layout.setContentsMargins(16, 6, 16, 6)
-        sum_layout.setSpacing(40)
+        sum_layout.setContentsMargins(20, 8, 20, 8)
+        sum_layout.setSpacing(48)
 
         self.lbl_count     = self._stat_label("发票总数", "0 张")
         self.lbl_total_amt = self._stat_label("金额合计", "¥ 0.00")
@@ -296,7 +333,7 @@ class InvoiceApp(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
-        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.verticalHeader().setDefaultSectionSize(38)
 
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -329,29 +366,7 @@ class InvoiceApp(QMainWindow):
             self._resize_timer.start(80)
         self.table.resizeEvent = _on_table_resize
 
-        self.table.setStyleSheet("""
-            QTableWidget { font-size:13px; gridline-color:#dce6f1; }
-            QHeaderView::section {
-                background-color: #1E6FBF; color: white;
-                font-weight: bold; font-size: 13px;
-                padding: 5px; border: none;
-                border-right: 1px solid #4A90D9;
-            }
-            QTableWidget::item {
-                padding: 2px 6px;
-                background-color: white;
-            }
-            QTableWidget::item:alternate { background:#EEF4FB; }
-            QTableWidget::item:selected {
-                background: #FFA500;
-                color: #1A1A1A;
-                font-weight: bold;
-            }
-            QTableWidget::item:hover:!selected { background:#FFF3CD; }
-            QTableWidget::item:selected:hover {
-                background: #FF8C00;
-            }
-        """)
+        self.table.setStyleSheet(TABLE_QSS)
         main_layout.addWidget(self.table)
 
         # ── 状态栏 ───────────────────────────────
@@ -367,15 +382,19 @@ class InvoiceApp(QMainWindow):
         # 安装 viewport 事件过滤器：点击已选中行取消选中
         self.table.viewport().installEventFilter(self)
 
+        # 全局按钮手型光标
+        for btn in self.findChildren(QPushButton):
+            btn.setCursor(Qt.PointingHandCursor)
+
     def _stat_label(self, title, value):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(1)
         lbl_t = QLabel(title)
-        lbl_t.setStyleSheet("color:#666; font-size:11px;")
+        lbl_t.setStyleSheet(f"color:{TEXT_SEC}; font-size:{FS_SM};")
         lbl_v = QLabel(value)
-        lbl_v.setStyleSheet("color:#1E6FBF; font-size:16px; font-weight:bold;")
+        lbl_v.setStyleSheet(f"color:{ACCENT}; font-size:17px; font-weight:bold;")
         v.addWidget(lbl_t)
         v.addWidget(lbl_v)
         w._value_label = lbl_v
@@ -400,23 +419,22 @@ class InvoiceApp(QMainWindow):
             self.table.setColumnWidth(col, w)
 
     def _set_global_style(self):
-        self.setStyleSheet("""
-            QMainWindow { background: #F5F8FC; }
-            QPushButton {
-                border: 1px solid #B0C4DE; border-radius: 4px;
-                padding: 4px 14px; background: #FFFFFF; font-size: 13px;
-            }
-            QPushButton:hover { background: #E8F0FE; border-color: #1E6FBF; }
-            QPushButton:pressed { background: #CCE0FF; }
-            QLineEdit {
-                border: 1px solid #B0C4DE; border-radius: 4px;
-                padding: 4px 8px; font-size: 13px; background: white;
-            }
-            QComboBox {
-                border: 1px solid #B0C4DE; border-radius: 4px;
-                padding: 2px 8px; font-size: 13px; background: white;
-            }
-        """)
+        from ui.theme import GLOBAL_QSS
+        self.setStyleSheet(GLOBAL_QSS)
+
+    def _set_app_icon(self):
+        from PyQt5.QtGui import QIcon
+        import os
+        # 打包后从资源路径加载，开发时从文件加载
+        paths = [
+            os.path.join(os.path.dirname(__file__), "ui", "icons", "app_icon.png"),
+            os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "ui", "icons", "app_icon.png"),
+            "icon.ico",
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                self.setWindowIcon(QIcon(p))
+                return
 
     # ── 筛选条件 ─────────────────────────────────
     def _get_available_years(self):
@@ -489,6 +507,14 @@ class InvoiceApp(QMainWindow):
             parts.append(f"企业号:{self._filter_company}")
         self.lbl_filter_hint.setText(f"当前筛选：{'  '.join(parts)}" if parts else "")
 
+    def _toggle_advanced_filter(self):
+        self._show_advanced_filter = not self._show_advanced_filter
+        self._advanced_filter_frame.setVisible(self._show_advanced_filter)
+        if self._show_advanced_filter:
+            self.btn_advanced_filter.setText("▾ 高级筛选")
+        else:
+            self.btn_advanced_filter.setText("▸ 高级筛选")
+
     def _reset_filter(self):
         self._filter_year     = None
         self._filter_month    = None
@@ -526,13 +552,16 @@ class InvoiceApp(QMainWindow):
                       self._filter_inv_type, self._filter_seller])
         if active:
             self.status.showMessage(f"筛选结果：显示 {len(shown)} 张 / 共 {len(self.records)} 张")
+        elif len(self.records) == 0:
+            self.status.showMessage(
+                "开始使用：拖拽 PDF 发票到窗口即可自动识别归档 | "
+                "Ctrl+O 导入 PDF | Ctrl+E 导出 Excel | Delete 删除选中行")
 
     # ── 数据持久化 ──────────────────────────────
     def _save_data(self):
         try:
             self._sync_records_from_table()
-            with open(self._data_file, "w", encoding="utf-8") as f:
-                json.dump(self.records, f, ensure_ascii=False, indent=2)
+            self._repo.save(self.records)
         except (OSError, IOError) as e:
             self.status.showMessage(f"数据保存失败: {e}")
 
@@ -590,30 +619,59 @@ class InvoiceApp(QMainWindow):
             pass
 
     def _load_data(self):
-        if not os.path.exists(self._data_file):
+        invoices = self._repo.load()
+        if not invoices:
             return
-        try:
-            with open(self._data_file, "r", encoding="utf-8") as f:
-                self.records = json.load(f)
-            if not isinstance(self.records, list):
-                self.records = []
-            self._save_locked = True
-            self.table.setUpdatesEnabled(False)
-            for data in self.records:
-                data.setdefault("company", "")
-                self._init_record_fields(data)
-                self._insert_row(data, scroll=False)
-            self.table.setUpdatesEnabled(True)
-            self._shown_records = list(self.records)
-            self._refresh_summary()
-            self._refresh_filter_combos()
-            if self.records:
-                self.status.showMessage(f"已自动加载 {len(self.records)} 条历史记录")
-            self._save_locked = False
-        except (OSError, json.JSONDecodeError) as e:
-            self._save_locked = False
-            self.table.setUpdatesEnabled(True)
-            self.status.showMessage(f"历史数据加载失败: {e}")
+        self.records = invoices
+        self._save_locked = True
+        self.table.setUpdatesEnabled(False)
+        for inv in self.records:
+            self._init_record_fields(inv)
+            self._insert_row(inv, scroll=False)
+        self.table.setUpdatesEnabled(True)
+        self._shown_records = list(self.records)
+        self._refresh_summary()
+        self._refresh_filter_combos()
+        self._save_locked = False
+        self.status.showMessage(f"已自动加载 {len(self.records)} 条历史记录")
+
+    # ── 键盘快捷键 ──────────────────────────────
+    def keyPressEvent(self, event):
+        """全局键盘快捷键"""
+        mod = event.modifiers()
+        key = event.key()
+
+        if mod == Qt.ControlModifier:
+            if key == Qt.Key_O:
+                self.open_files()
+                return
+            elif key == Qt.Key_E:
+                self.export_excel()
+                return
+            elif key == Qt.Key_F:
+                # 聚焦第一个筛选控件
+                self.edit_buyer_search.setFocus()
+                self.edit_buyer_search.selectAll()
+                return
+            elif key == Qt.Key_V:
+                # Ctrl+V 粘贴截图或合同
+                rows = sorted(set(item.row() for item in self.table.selectedItems()))
+                if not rows:
+                    self.status.showMessage("请先选中一行，再按 Ctrl+V 粘贴截图或合同")
+                    return
+                self._paste_from_clipboard(rows[0])
+                return
+
+        if key == Qt.Key_Delete:
+            # 删除选中行（仅在表格有焦点时）
+            if self.table.hasFocus():
+                self._delete_selected_rows()
+                return
+        elif key == Qt.Key_Escape:
+            self._reset_filter()
+            return
+
+        super().keyPressEvent(event)
 
     # ── 拖拽支持 ────────────────────────────────
     def dragEnterEvent(self, e: QDragEnterEvent):
@@ -702,21 +760,49 @@ class InvoiceApp(QMainWindow):
         dlg = SettingsDialog(self, parent=self)
         dlg.exec_()
 
-    def keyPressEvent(self, event):
-        """
-        Ctrl+V：根据剪贴板内容类型判断操作：
-          - 图片数据 → 添加截图
-          - 文件路径（图片扩展名）→ 添加截图
-          - 文件路径（合同扩展名）→ 添加合同
-        """
-        if event.key() == Qt.Key_V and event.modifiers() == Qt.ControlModifier:
-            rows = sorted(set(item.row() for item in self.table.selectedItems()))
-            if not rows:
-                self.status.showMessage("请先选中一行，再按 Ctrl+V 粘贴截图或合同")
-                return
-            self._paste_from_clipboard(rows[0])
+    def _check_desktop_shortcut(self):
+        """首次启动检测桌面快捷方式，不存在则提示创建"""
+        import subprocess
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        lnk_path = os.path.join(desktop, "发票归档.lnk")
+        if os.path.exists(lnk_path):
             return
-        super().keyPressEvent(event)
+        reply = QMessageBox.question(
+            self, "创建快捷方式",
+            "是否在桌面创建「发票归档」快捷方式？\n\n"
+            "创建后可从桌面直接双击启动软件。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            exe_path = sys.executable
+            # 打包后 EXE 路径，开发时用脚本路径
+            if not exe_path.endswith(".exe") or "python" in exe_path.lower():
+                script = os.path.abspath(sys.argv[0]) if sys.argv[0] else __file__
+                ps_cmd = (
+                    f"$ws = New-Object -ComObject WScript.Shell; "
+                    f"$sc = $ws.CreateShortcut('{lnk_path}'); "
+                    f"$sc.TargetPath = 'pythonw'; "
+                    f"$sc.Arguments = '{script}'; "
+                    f"$sc.WorkingDirectory = '{os.path.dirname(script)}'; "
+                    f"$sc.Save()"
+                )
+            else:
+                ps_cmd = (
+                    f"$ws = New-Object -ComObject WScript.Shell; "
+                    f"$sc = $ws.CreateShortcut('{lnk_path}'); "
+                    f"$sc.TargetPath = '{exe_path}'; "
+                    f"$sc.Save()"
+                )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True, timeout=10
+            )
+            if os.path.exists(lnk_path):
+                self.status.showMessage("桌面快捷方式已创建")
+        except Exception:
+            pass    # 静默失败，不影响主流程
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(
@@ -788,28 +874,14 @@ class InvoiceApp(QMainWindow):
     # ── 批量导入专用槽（纯内存操作，不碰 UI）────────────────
     def _add_record_batch(self, data: dict):
         """后台每解析完一条调此槽；只写 self.records，UI 留给 _parse_done 统一渲染。"""
+        inv = Invoice.from_dict(data)
+        # 重复发票号检测：跳过已存在的记录
+        if inv.invoice_no and self._find_record_index(inv.invoice_no) is not None:
+            return
         if self.pending_company:
-            data["company"] = self.pending_company
-        self._init_record_fields(data)
-        self.records.append(data)
-
-    def _add_record(self, data: dict):
-        """单条记录添加（拖放/非批量场景），保留 save + refresh"""
-        if self.pending_company:
-            data["company"] = self.pending_company
-        self._init_record_fields(data)
-
-        original_pdf_path = data.get("pdf_path", "")
-        if original_pdf_path:
-            data["pdf_path"] = _copy_file_to_dir(original_pdf_path,
-                                                  os.path.join(self._data_dir, "invoices"))
-
-        self.records.append(data)
-        if self._record_matches_filter(data):
-            self._insert_row(data)
-        self._refresh_summary()
-        self._refresh_filter_combos()
-        self._save_data()
+            inv.company = self.pending_company
+        self._init_record_fields(inv)
+        self.records.append(inv)
 
     def _insert_row(self, data: dict, scroll: bool = True):
         row = self.table.rowCount()
@@ -835,14 +907,14 @@ class InvoiceApp(QMainWindow):
         # 发票PDF列：显示文件名 + 查看按钮（内嵌 widget）
         self._set_invoice_pdf_cell(row, data)
 
-        # 发票类型：红票显示"🔴 红票-类型"，蓝票显示"🔵 类型"
+        # 发票类型：红票显示"● 红票-类型"，蓝票显示"● 类型"
         inv_type = data.get("invoice_type", "")
         if is_red:
-            type_text = f"🔴 红票{'-' + inv_type if inv_type else ''}"
-            type_fg   = "#CC0000"
+            type_text = f"● 红票{'-' + inv_type if inv_type else ''}"
+            type_fg   = RED
         else:
-            type_text = f"🔵 {inv_type}" if inv_type else ""
-            type_fg   = "#1E6FBF"
+            type_text = f"● {inv_type}" if inv_type else ""
+            type_fg   = ACCENT
         type_item = cell(type_text, fg=type_fg, bg=row_bg)
         self.table.setItem(row, COL_IDX["发票类型"], type_item)
 
@@ -851,7 +923,7 @@ class InvoiceApp(QMainWindow):
             v = data.get(field, "")
             v = str(v) if v is not None else ""
             neg = v.startswith('-')
-            return cell(v, fg="#CC0000" if neg else None, bg=row_bg if row_bg else ("#FFF0F0" if neg else None))
+            return cell(v, fg=RED if neg else None, bg=row_bg if row_bg else ("#FFF0F0" if neg else None))
 
         self.table.setItem(row, COL_IDX["购买方名称"],   cell(data.get("buyer_name", ""), bg=row_bg))
         self.table.setItem(row, COL_IDX["纳税人识别号"],  cell(data.get("buyer_tax_id", ""), bg=row_bg))
@@ -860,6 +932,14 @@ class InvoiceApp(QMainWindow):
         self.table.setItem(row, COL_IDX["征收率"],       cell(data.get("tax_rate", ""), bg=row_bg))
         self.table.setItem(row, COL_IDX["税额(元)"],     amount_cell("tax_amount"))
         self.table.setItem(row, COL_IDX["价税合计(元)"],  amount_cell("total"))
+
+        # 数字列使用等宽字体，保证金额对齐扫描
+        _mono = QFont(MONO_FONT, 12)
+        for c in (COL_IDX["金额(元)"], COL_IDX["征收率"], COL_IDX["税额(元)"], COL_IDX["价税合计(元)"]):
+            it = self.table.item(row, c)
+            if it:
+                it.setFont(_mono)
+
         self.table.setItem(row, COL_IDX["发票号码"],      cell(data.get("invoice_no", ""), bg=row_bg))
         self.table.setItem(row, COL_IDX["开票日期"],      cell(data.get("invoice_date", ""), bg=row_bg))
         self.table.setItem(row, COL_IDX["企业号"],        cell(data.get("company", ""), editable=True, bg=row_bg))
@@ -869,7 +949,7 @@ class InvoiceApp(QMainWindow):
 
         remark_val  = data.get("remark", "") or data.get("error", "") or "✓"
         remark_item = cell(remark_val, editable=True,
-                           fg="#CC0000" if data.get("error") else ("#CC0000" if is_red else ("#1E8B1E" if remark_val == "✓" else "#333")),
+                           fg=RED if data.get("error") else (RED if is_red else (GREEN if remark_val == "✓" else TEXT)),
                            bg=row_bg)
         self.table.setItem(row, COL_IDX["备注"], remark_item)
 
@@ -885,12 +965,16 @@ class InvoiceApp(QMainWindow):
 
         w = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(4, 1, 2, 1)
-        lay.setSpacing(3)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
 
-        lbl = QLabel(fname)
+        lbl = QLabel()
+        # 超长文件名截断
+        fm = lbl.fontMetrics()
+        display_name = fm.elidedText(fname, Qt.ElideRight, 180)
+        lbl.setText(display_name)
         lbl.setStyleSheet(
-            f"font-size:12px; color:{'#1E6FBF' if exists else '#999'};"
+            f"font-size:12px; color:{ACCENT if exists else TEXT_DIM};"
         )
         lbl.setToolTip(pdf_path or "（路径未记录）")
         lay.addWidget(lbl, 1)
@@ -899,7 +983,7 @@ class InvoiceApp(QMainWindow):
             btn_v = QPushButton("查看")
             btn_v.setFixedHeight(24)
             btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet("font-size:11px; padding:1px 4px; color:#1E6FBF;")
+            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
             btn_v.setToolTip("打开 / 下载发票原文件")
             btn_v.clicked.connect(lambda _, r=row: self._view_invoice_pdf(r))
             lay.addWidget(btn_v)
@@ -914,6 +998,7 @@ class InvoiceApp(QMainWindow):
         dlg = InvoiceManagerDialog(
             pdf_path=rec.get("pdf_path", ""),
             rec_name=rec.get("buyer_name", "") or rec.get("file", ""),
+            rec_no=rec.get("invoice_no", ""),
             parent=self
         )
         dlg.exec_()
@@ -923,12 +1008,12 @@ class InvoiceApp(QMainWindow):
         screenshots = data.get("screenshots", [])
         w = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(3)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
 
         if screenshots:
-            lbl = QLabel(f"📷{len(screenshots)}")
-            lbl.setStyleSheet("color:#1E6FBF; font-size:12px;")
+            lbl = QLabel(f"[{len(screenshots)}]")
+            lbl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:bold;")
             btn_v = QPushButton("查看")
             btn_v.setFixedHeight(24)
             btn_v.setFixedWidth(40)
@@ -938,14 +1023,14 @@ class InvoiceApp(QMainWindow):
             lay.addWidget(btn_v)
         else:
             lbl = QLabel("—")
-            lbl.setStyleSheet("color:#aaa; font-size:12px;")
+            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
             lay.addWidget(lbl)
 
         btn_add = QPushButton("＋")
         btn_add.setFixedHeight(24)
         btn_add.setFixedWidth(26)
         btn_add.setToolTip("添加付款截图")
-        btn_add.setStyleSheet("font-size:13px; padding:0; color:#1E6FBF;")
+        btn_add.setStyleSheet(f"font-size:13px; padding:0; color:{ACCENT}; border:none; background:transparent;")
         btn_add.clicked.connect(lambda _, r=row: self._add_screenshot(r))
         lay.addWidget(btn_add)
         lay.addStretch()
@@ -956,29 +1041,29 @@ class InvoiceApp(QMainWindow):
         contracts = data.get("contracts", [])
         w = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(2, 1, 2, 1)
-        lay.setSpacing(3)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
 
         if contracts:
-            lbl = QLabel(f"📄{len(contracts)}")
-            lbl.setStyleSheet("color:#2E7D32; font-size:12px;")
+            lbl = QLabel(f"[{len(contracts)}]")
+            lbl.setStyleSheet(f"color:{GREEN}; font-size:12px; font-weight:bold;")
             btn_v = QPushButton("查看")
             btn_v.setFixedHeight(24)
             btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet("font-size:11px; padding:1px 4px; color:#2E7D32;")
+            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{GREEN}; border:none; background:transparent;")
             btn_v.clicked.connect(lambda _, r=row: self._view_contracts(r))
             lay.addWidget(lbl)
             lay.addWidget(btn_v)
         else:
             lbl = QLabel("—")
-            lbl.setStyleSheet("color:#aaa; font-size:12px;")
+            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
             lay.addWidget(lbl)
 
         btn_add = QPushButton("＋")
         btn_add.setFixedHeight(24)
         btn_add.setFixedWidth(26)
         btn_add.setToolTip("添加合同文件（PDF/Word）")
-        btn_add.setStyleSheet("font-size:13px; padding:0; color:#2E7D32;")
+        btn_add.setStyleSheet(f"font-size:13px; padding:0; color:{GREEN}; border:none; background:transparent;")
         btn_add.clicked.connect(lambda _, r=row: self._add_contract(r))
         lay.addWidget(btn_add)
         lay.addStretch()
@@ -1008,22 +1093,9 @@ class InvoiceApp(QMainWindow):
         rec = self._get_record_by_row(row)
         if rec is None:
             return
-        inv_no    = rec.get("invoice_no", "") or rec.get("file", "unnamed")
-        safe_name = re.sub(r'[\\/:*?"<>|]', '_', inv_no)
-        added = 0
-        for src in src_paths:
-            if not os.path.exists(src):
-                continue
-            ext = os.path.splitext(src)[1].lower() or ".png"
-            ts  = datetime.now().strftime("%Y%m%d%H%M%S%f")
-            dst = os.path.join(self._screenshot_dir, f"{safe_name}_{ts}{ext}")
-            try:
-                shutil.copy2(src, dst)
-                rec.setdefault("screenshots", []).append(dst)
-                added += 1
-            except Exception as ex:
-                QMessageBox.warning(self, "复制失败",
-                    f"文件 {os.path.basename(src)} 复制失败：{ex}")
+        added = self._svc.add_attachments(rec, src_paths, "screenshots",
+                                           self._screenshot_dir,
+                                           InvoiceService.screenshot_namer)
         if added > 0:
             self._set_screenshot_cell(row, rec)
             self._save_data()
@@ -1055,24 +1127,9 @@ class InvoiceApp(QMainWindow):
         rec = self._get_record_by_row(row)
         if rec is None:
             return
-        inv_no    = rec.get("invoice_no", "") or rec.get("file", "unnamed")
-        safe_name = re.sub(r'[\\/:*?"<>|]', '_', inv_no)
-        added = 0
-        for src in src_paths:
-            if not os.path.exists(src):
-                continue
-            ext      = os.path.splitext(src)[1].lower()
-            orig_base = os.path.splitext(os.path.basename(src))[0]
-            ts       = datetime.now().strftime("%Y%m%d%H%M%S%f")
-            dst_name = f"{safe_name}_{orig_base}_{ts}{ext}"
-            dst      = os.path.join(self._contract_dir, dst_name)
-            try:
-                shutil.copy2(src, dst)
-                rec.setdefault("contracts", []).append(dst)
-                added += 1
-            except Exception as ex:
-                QMessageBox.warning(self, "复制失败",
-                    f"文件 {os.path.basename(src)} 复制失败：{ex}")
+        added = self._svc.add_attachments(rec, src_paths, "contracts",
+                                           self._contract_dir,
+                                           InvoiceService.contract_namer)
         if added > 0:
             self._set_contract_cell(row, rec)
             self._save_data()
@@ -1165,20 +1222,20 @@ class InvoiceApp(QMainWindow):
         menu = QMenu(self)
 
         # 截图区
-        menu.addAction("📷 添加付款截图（文件选择）", self._ctx_add_screenshot)
-        menu.addAction("📋 粘贴截图（Ctrl+V）",        self._ctx_paste_screenshot)
-        menu.addAction("🔍 查看付款截图",               self._ctx_view_screenshot)
-        menu.addAction("🗑 清除此行截图",               self._ctx_delete_screenshots)
+        menu.addAction(get_icon('camera'), "添加付款截图（文件选择）", self._ctx_add_screenshot)
+        menu.addAction(get_icon('clipboard'), "粘贴截图（Ctrl+V）", self._ctx_paste_screenshot)
+        menu.addAction(get_icon('search'), "查看付款截图", self._ctx_view_screenshot)
+        menu.addAction(get_icon('delete'), "清除此行截图", self._ctx_delete_screenshots)
         menu.addSeparator()
 
         # 合同区
-        menu.addAction("📄 添加合同（文件选择）",       self._ctx_add_contract)
-        menu.addAction("📋 粘贴合同文件（Ctrl+V）",     self._ctx_paste_contract)
-        menu.addAction("📂 查看/管理合同",              self._ctx_view_contracts)
-        menu.addAction("🗑 清除此行合同",               self._ctx_delete_contracts)
+        menu.addAction(get_icon('document'), "添加合同（文件选择）", self._ctx_add_contract)
+        menu.addAction(get_icon('clipboard'), "粘贴合同文件（Ctrl+V）", self._ctx_paste_contract)
+        menu.addAction(get_icon('folder'), "查看/管理合同", self._ctx_view_contracts)
+        menu.addAction(get_icon('delete'), "清除此行合同", self._ctx_delete_contracts)
         menu.addSeparator()
 
-        menu.addAction("❌ 删除选中行", self._delete_selected_rows)
+        menu.addAction(get_icon('delete'), "删除选中行", self._delete_selected_rows)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
 
     def _selected_rows(self):
@@ -1442,6 +1499,17 @@ def main():
     app.setFont(QFont("Microsoft YaHei", 9))
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+    # 应用级图标（任务栏显示）
+    from PyQt5.QtGui import QIcon
+    icon_paths = [
+        os.path.join(os.path.dirname(__file__), "ui", "icons", "app_icon.png"),
+        "icon.ico",
+    ]
+    for p in icon_paths:
+        if os.path.exists(p):
+            app.setWindowIcon(QIcon(p))
+            break
 
     win = InvoiceApp()
     win.show()
