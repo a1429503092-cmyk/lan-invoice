@@ -11,10 +11,10 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtCore import Qt
 from PIL import Image
 
 import pdfplumber
+from ui.dialogs.pdf_viewer import PdfViewerDialog
 
 
 # 模块级 QApplication（所有测试共享）
@@ -44,27 +44,6 @@ def _patch_qmessagebox():
     patch.object(QMessageBox, "information", return_value=None).start()
     patch.object(QMessageBox, "critical", return_value=None).start()
     return patcher
-
-
-class MockKeyEvent:
-    """模拟 QKeyEvent 用于键盘事件测试。"""
-    def __init__(self, key):
-        self._key = key
-
-    def key(self):
-        return self._key
-
-    def modifiers(self):
-        return Qt.NoModifier
-
-    def isAccepted(self):
-        return False
-
-    def accept(self):
-        pass
-
-    def ignore(self):
-        pass
 
 
 # ── PdfViewerDialog 基本功能测试 ─────────────
@@ -99,7 +78,6 @@ class TestPdfViewerBasic(unittest.TestCase):
         pdf = os.path.join(self.tmp, "single.pdf")
         _make_test_pdf(pdf, pages=1)
 
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog(pdf)
         dlg.show()
 
@@ -115,7 +93,6 @@ class TestPdfViewerBasic(unittest.TestCase):
         pdf = os.path.join(self.tmp, "multi.pdf")
         _make_test_pdf(pdf, pages=3)
 
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog(pdf)
         dlg.show()
 
@@ -131,7 +108,6 @@ class TestPdfViewerBasic(unittest.TestCase):
         pdf = os.path.join(self.tmp, "multi.pdf")
         _make_test_pdf(pdf, pages=3)
 
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog(pdf)
         dlg._go_to_page(1)
         dlg.show()
@@ -148,7 +124,6 @@ class TestPdfViewerBasic(unittest.TestCase):
         pdf = os.path.join(self.tmp, "multi.pdf")
         _make_test_pdf(pdf, pages=3)
 
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog(pdf)
         dlg._go_to_page(2)
         dlg.show()
@@ -162,7 +137,6 @@ class TestPdfViewerBasic(unittest.TestCase):
 
     def test_nonexistent_file_shows_warning(self):
         """打开不存在的 PDF → QMessageBox.warning 被调用"""
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog("/nonexistent/test.pdf")
         QMessageBox.warning.assert_called()
         dlg.close()
@@ -175,7 +149,6 @@ class TestPdfViewerBasic(unittest.TestCase):
         with open(corrupt, "w") as f:
             f.write("not a pdf content at all")
 
-        from ui.dialogs.pdf_viewer import PdfViewerDialog
         dlg = PdfViewerDialog(corrupt)
         QMessageBox.warning.assert_called()
         dlg.close()
