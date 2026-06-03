@@ -27,7 +27,7 @@ class RenderWorker(QThread):
     def run(self):
         try:
             rotation = getattr(self.page, 'rotation', 0)
-            img = self.page.to_image(resolution=self.render_dpi, antialias=True)
+            img = self.page.to_image(resolution=self.render_dpi)
             pil_img = img.original
             if rotation:
                 pil_img = pil_img.rotate(-rotation, expand=True)
@@ -51,21 +51,9 @@ class PdfViewerDialog(QDialog):
         self._original_pixmap = None
         self._pdf = None
         self._load_error = None
-        self._render_dpi = 150
+        self._render_dpi = 72  # 72 DPI 屏幕分辨率，快速预览；高清可切换
         self._worker = None
         self._rendering = False
-
-        # 检测系统 DPI 缩放
-        try:
-            app = QApplication.instance()
-            if app:
-                screen = app.primaryScreen()
-                if screen:
-                    ratio = screen.devicePixelRatio()
-                    if ratio >= 2.0:
-                        self._render_dpi = 300
-        except Exception:
-            pass
 
         self.setWindowTitle(os.path.basename(pdf_path))
         self.resize(900, 700)
