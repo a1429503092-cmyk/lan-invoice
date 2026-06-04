@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
     QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget
 )
+from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtGui import QDesktopServices, QPixmap, QImage
 
@@ -80,6 +81,7 @@ class AttachmentViewerDialog(QDialog):
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list_widget.setMinimumWidth(180)
+        self.list_widget.setIconSize(QtCore.QSize(16, 16))
         self.list_widget.setStyleSheet(
             f"QListWidget {{"
             f"  background:{LIST_BG}; border:1px solid #444; border-radius:4px;"

@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QListWidget, QListWidgetItem, QAbstractItemView, QFrame
 )
+from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 
@@ -81,6 +82,7 @@ class AddAttachmentDialog(QDialog):
         # ── 文件列表 ─────────────────────────
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list_widget.setIconSize(QtCore.QSize(16, 16))
         self.list_widget.setStyleSheet(
             f"QListWidget {{"
             f"  background:{PANEL_BG}; border:1px solid #444; border-radius:4px;"
