@@ -317,10 +317,10 @@ class InvoiceApp(QMainWindow):
         self.summary_frame.setFrameShape(QFrame.StyledPanel)
         self.summary_frame.setStyleSheet(SUMMARY_FRAME_QSS)
         sum_layout = QHBoxLayout(self.summary_frame)
-        sum_layout.setContentsMargins(20, 10, 20, 10)
+        sum_layout.setContentsMargins(0, 0, 0, 0)
         sum_layout.setSpacing(0)
 
-        self.lbl_count     = self._stat_label("发票总数", "0 张")
+        self.lbl_count     = self._stat_label("发票总数", "0 张", accent=True)
         self.lbl_total_amt = self._stat_label("金额合计", "¥ 0.00")
         self.lbl_total_tax = self._stat_label("税额合计", "¥ 0.00")
         self.lbl_total_all = self._stat_label("价税合计", "¥ 0.00")
@@ -331,8 +331,7 @@ class InvoiceApp(QMainWindow):
             if i < len(stat_widgets) - 1:
                 sep = QFrame()
                 sep.setFrameShape(QFrame.VLine)
-                sep.setFixedHeight(28)
-                sep.setStyleSheet(f"color:{ACCENT_BORDER};")
+                sep.setStyleSheet(f"color:{BORDER_LIGHT};")
                 sum_layout.addWidget(sep)
         main_layout.addWidget(self.summary_frame)
 
@@ -484,15 +483,23 @@ class InvoiceApp(QMainWindow):
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
 
-    def _stat_label(self, title, value):
+    def _stat_label(self, title, value, accent=False):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(8, 0, 8, 0)
-        v.setSpacing(2)
+        v.setContentsMargins(20, 12, 20, 12)
+        v.setSpacing(4)
         lbl_t = QLabel(title)
-        lbl_t.setStyleSheet(f"color:{TEXT_SEC}; font-size:{FS_SM}; background:transparent;")
+        lbl_t.setStyleSheet(
+            f"color:{TEXT_SEC}; font-size:{FS_SM}; background:transparent; "
+            f"font-weight:500; letter-spacing:0.5px;"
+        )
         lbl_v = QLabel(value)
-        lbl_v.setStyleSheet(f"color:{ACCENT}; font-size:16px; font-weight:bold; background:transparent;")
+        color = ACCENT if accent else TEXT
+        size = "20px" if accent else "17px"
+        lbl_v.setStyleSheet(
+            f"color:{color}; font-size:{size}; font-weight:600; "
+            f"background:transparent; font-family:'Consolas';"
+        )
         v.addWidget(lbl_t)
         v.addWidget(lbl_v)
         w._value_label = lbl_v

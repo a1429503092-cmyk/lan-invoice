@@ -164,8 +164,9 @@ QProgressBar::chunk {{
 
 SUMMARY_FRAME_QSS = f"""
 QFrame {{
-    background: {ACCENT_LIGHT};
-    border: 1px solid {ACCENT_BORDER};
+    background: {WHITE};
+    border: 1px solid {BORDER_LIGHT};
+    border-radius: 6px;
 }}
 """
 
