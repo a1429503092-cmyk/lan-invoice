@@ -3,6 +3,7 @@
 
 import os
 import shutil
+import fitz
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
@@ -10,7 +11,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget
 )
 from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices, QPixmap
+from PyQt5.QtGui import QDesktopServices, QPixmap, QImage
 
 from logger import getLogger
 log = getLogger(__name__)
@@ -273,9 +274,32 @@ class AttachmentViewerDialog(QDialog):
 
     def _show_pdf_preview(self, path, exists):
         if exists:
+            try:
+                doc = fitz.open(path)
+                if doc.page_count > 0:
+                    page = doc[0]
+                    mat = fitz.Matrix(1.0, 1.0)
+                    pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+                    img_data = pix.samples
+                    qimg = QImage(img_data, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
+                    qpix = QPixmap.fromImage(qimg)
+                    doc.close()
+                    if not qpix.isNull():
+                        avail_w = max(self.preview_scroll.width() - 30, 200)
+                        avail_h = max(self.preview_scroll.height() - 60, 200)
+                        if qpix.width() > avail_w or qpix.height() > avail_h:
+                            qpix = qpix.scaled(avail_w, avail_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        self.lbl_preview_img.setPixmap(qpix)
+                        self.lbl_preview_img.show()
+                        self.lbl_preview.hide()
+                        self.btn_inline_open.hide()
+                        return
+                doc.close()
+            except Exception:
+                pass
             self.btn_inline_open.setText("📄 打开 PDF 预览")
             self.btn_inline_open.show()
-            self.lbl_preview.setText("PDF 文件 — 点击下方按钮预览")
+            self.lbl_preview.setText("PDF 文件 — 点击按钮打开完整预览")
             self.lbl_preview.show()
         else:
             self.lbl_preview.setText("文件不存在")
