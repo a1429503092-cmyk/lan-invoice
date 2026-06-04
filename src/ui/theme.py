@@ -114,6 +114,10 @@ QTableWidget {{
     gridline-color: transparent;
     background: {WHITE};
     border: 1px solid {BORDER};
+    outline: none;
+}}
+QTableWidget:focus {{
+    outline: none;
 }}
 QHeaderView::section {{
     background: {ACCENT};
@@ -134,10 +138,13 @@ QTableWidget::item:alternate {{
 QTableWidget::item:selected {{
     background: {ACCENT_LIGHT};
     color: {TEXT};
+    border: none;
+    outline: none;
 }}
 QTableWidget::item:focus {{
     outline: none;
     border: none;
+    background: transparent;
 }}
 QTableWidget::item:hover:!selected {{
     background: {BG_HOVER};
