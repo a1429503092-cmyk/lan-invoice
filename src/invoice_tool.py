@@ -336,7 +336,7 @@ class InvoiceApp(QMainWindow):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.table.verticalHeader().setDefaultSectionSize(TABLE_ROW_HEIGHT)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         header = self.table.horizontalHeader()
         # 固定列（像素宽度不变）
@@ -383,7 +383,7 @@ class InvoiceApp(QMainWindow):
         self._freeze_table.setColumnCount(1)
         self._freeze_table.setHorizontalHeaderLabels(["操作"])
         self._freeze_table.setFixedWidth(FREEZE_COL_WIDTH)
-        self._freeze_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._freeze_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._freeze_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._freeze_table.verticalHeader().hide()
         self._freeze_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
@@ -1131,6 +1131,21 @@ class InvoiceApp(QMainWindow):
                 it.setBackground(QColor(bg))
             return it
 
+        def amount_item(field):
+            v = data.get(field, "")
+            v = str(v) if v is not None else ""
+            neg = v.startswith('-')
+            it = QTableWidgetItem(v)
+            it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            if neg:
+                it.setForeground(QColor(RED))
+            if row_bg:
+                it.setBackground(QColor(row_bg))
+            elif neg:
+                it.setBackground(QColor("#FFF0F0"))
+            return it
+
         # 红票整行浅红背景
         row_bg = "#FFE4E4" if is_red else None
 
@@ -1146,20 +1161,14 @@ class InvoiceApp(QMainWindow):
         type_item = cell(type_text, fg=type_fg, bg=row_bg)
         self.table.setItem(row, self._current_col_idx["发票类型"], type_item)
 
-        # 金额列：负数标红（红票金额已在入库时转负）
-        def amount_cell(field):
-            v = data.get(field, "")
-            v = str(v) if v is not None else ""
-            neg = v.startswith('-')
-            return cell(v, fg=RED if neg else None, bg=row_bg if row_bg else ("#FFF0F0" if neg else None))
-
+        # 金额列：右对齐，负数标红
         self.table.setItem(row, self._current_col_idx["购买方名称"],   cell(data.get("buyer_name", ""), bg=row_bg))
         self.table.setItem(row, self._current_col_idx["纳税人识别号"],  cell(data.get("buyer_tax_id", ""), bg=row_bg))
         self.table.setItem(row, self._current_col_idx["销售方名称"],   cell(data.get("seller_name", ""), bg=row_bg))
-        self.table.setItem(row, self._current_col_idx["金额(元)"],     amount_cell("amount"))
+        self.table.setItem(row, self._current_col_idx["金额(元)"],     amount_item("amount"))
         self.table.setItem(row, self._current_col_idx["征收率"],       cell(data.get("tax_rate", ""), bg=row_bg))
-        self.table.setItem(row, self._current_col_idx["税额(元)"],     amount_cell("tax_amount"))
-        self.table.setItem(row, self._current_col_idx["价税合计(元)"],  amount_cell("total"))
+        self.table.setItem(row, self._current_col_idx["税额(元)"],     amount_item("tax_amount"))
+        self.table.setItem(row, self._current_col_idx["价税合计(元)"],  amount_item("total"))
 
         # 数字列使用等宽字体，保证金额对齐扫描
         _mono = QFont(MONO_FONT, 12)
@@ -1356,15 +1365,14 @@ class InvoiceApp(QMainWindow):
         lay.setSpacing(4)
 
         if attachments:
-            btn_v = QPushButton(f"[{len(attachments)}]")
-            btn_v.setFixedHeight(22)
-            btn_v.setFixedWidth(36)
+            btn_v = QPushButton(str(len(attachments)))
+            btn_v.setIcon(get_icon('paperclip'))
+            btn_v.setFixedHeight(24)
             btn_v.setCursor(Qt.PointingHandCursor)
             btn_v.setToolTip(f"共 {len(attachments)} 个附件，点击查看")
             btn_v.setStyleSheet(
-                f"font-size:13px; font-weight:bold; padding:0; "
-                f"color:{ACCENT}; border:none; background:transparent; "
-                f"text-decoration:underline;"
+                f"font-size:13px; font-weight:bold; padding:0 6px; "
+                f"color:{ACCENT}; border:none; background:transparent;"
             )
             btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
             lay.addWidget(btn_v)
