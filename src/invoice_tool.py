@@ -1181,10 +1181,21 @@ class InvoiceApp(QMainWindow):
 
         self._set_attachment_cell(row, data)
 
-        remark_val  = data.get("remark", "") or data.get("error", "") or "✓"
-        remark_item = cell(remark_val, editable=True,
-                           fg=RED if data.get("error") else (RED if is_red else (GREEN if remark_val == "✓" else TEXT)),
-                           bg=row_bg)
+        error_msg = data.get("error", "")
+        remark_val = data.get("remark", "")
+        if error_msg:
+            display_text = f"⚠ {error_msg}"
+            display_fg = RED
+        elif remark_val:
+            display_text = remark_val
+            display_fg = RED if is_red else TEXT
+        elif is_red:
+            display_text = "红票"
+            display_fg = RED
+        else:
+            display_text = ""
+            display_fg = TEXT_DIM
+        remark_item = cell(display_text, editable=True, fg=display_fg, bg=row_bg)
         self.table.setItem(row, self._current_col_idx["备注"], remark_item)
 
         if scroll:
