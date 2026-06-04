@@ -1345,15 +1345,17 @@ class InvoiceApp(QMainWindow):
         lay.setSpacing(4)
 
         if attachments:
-            lbl = QLabel(f"[{len(attachments)}]")
-            lbl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:bold;")
-            btn_v = QPushButton("查看")
-            btn_v.setFixedHeight(24)
-            btn_v.setFixedWidth(40)
+            btn_v = QPushButton(f"[{len(attachments)}]")
+            btn_v.setFixedHeight(22)
+            btn_v.setFixedWidth(36)
+            btn_v.setCursor(Qt.PointingHandCursor)
+            btn_v.setToolTip(f"共 {len(attachments)} 个附件，点击查看")
             btn_v.setStyleSheet(
-                f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
+                f"font-size:13px; font-weight:bold; padding:0; "
+                f"color:{ACCENT}; border:none; background:transparent; "
+                f"text-decoration:underline;"
+            )
             btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
-            lay.addWidget(lbl)
             lay.addWidget(btn_v)
         else:
             lbl = QLabel("—")
