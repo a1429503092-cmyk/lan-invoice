@@ -1359,12 +1359,15 @@ class InvoiceApp(QMainWindow):
             lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
             lay.addWidget(lbl)
 
-        btn_add = QPushButton("＋")
-        btn_add.setFixedHeight(24)
-        btn_add.setFixedWidth(26)
-        btn_add.setToolTip("添加附件")
+        btn_add = QPushButton("＋ 添加")
+        btn_add.setFixedHeight(26)
+        btn_add.setFixedWidth(58)
+        btn_add.setToolTip("拖拽或选择附件文件")
+        btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.setStyleSheet(
-            f"font-size:13px; padding:0; color:{ACCENT}; border:none; background:transparent;")
+            f"font-size:12px; padding:0 6px; color:white; background:{ACCENT};"
+            f"border:none; border-radius:3px; font-weight:bold;"
+        )
         btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
         lay.addWidget(btn_add)
         lay.addStretch()
