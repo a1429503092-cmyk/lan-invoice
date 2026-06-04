@@ -67,9 +67,15 @@ def record_matches_filter(rec: dict,
         search_text = filter_buyer.lower()
         if search_text not in buyer_name and search_text not in buyer_tax_id:
             return False
-    # 企业号模糊搜索
+    # 标签模糊搜索（兼容旧 company 字段）
     if filter_company:
-        company = rec.get("company", "")
-        if filter_company.lower() not in company.lower():
+        search_text = filter_company.lower()
+        tags = rec.get("tags", {})
+        found = any(search_text in v.lower() for v in tags.values())
+        # 兼容旧 company 字段
+        if not found:
+            company = rec.get("company", "")
+            found = search_text in company.lower()
+        if not found:
             return False
     return True

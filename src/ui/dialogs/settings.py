@@ -2,14 +2,19 @@
 """设置对话框：数据目录配置 + 软件另存 + 数据备份恢复"""
 
 import os
+import json
 import shutil
 import zipfile
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QFileDialog, QMessageBox, QFrame
+    QFileDialog, QMessageBox, QFrame, QListWidget
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
+
+from logger import getLogger
+log = getLogger(__name__)
 
 from ui.theme import (TEXT, TEXT_SEC, TEXT_DIM, ACCENT,
                        BG_ALT, BORDER_LIGHT, FS, FS_SM)
@@ -99,19 +104,19 @@ class SettingsDialog(QDialog):
         path_row.setSpacing(8)
         self.edit_data_dir = QLineEdit(self._app._data_dir)
         self.edit_data_dir.setReadOnly(True)
-        self.edit_data_dir.setFixedHeight(28)
+        self.edit_data_dir.setFixedHeight(32)
         self.edit_data_dir.setStyleSheet(
             f"background:{BG_ALT}; border:none; "
             "padding:2px 6px; font-size:11px;")
         btn_browse = QPushButton("浏览…")
-        btn_browse.setFixedHeight(28)
+        btn_browse.setFixedHeight(32)
         btn_browse.clicked.connect(self._browse_data_dir)
         path_row.addWidget(self.edit_data_dir, 1)
         path_row.addWidget(btn_browse)
         layout.addLayout(path_row)
 
         btn_apply = QPushButton("应用新目录")
-        btn_apply.setFixedHeight(28)
+        btn_apply.setFixedHeight(32)
         btn_apply.clicked.connect(self._apply_data_dir)
         layout.addWidget(btn_apply)
 
@@ -126,9 +131,40 @@ class SettingsDialog(QDialog):
         layout.addWidget(save_hint)
 
         btn_saveas = QPushButton("选择目录另存…")
-        btn_saveas.setFixedHeight(28)
+        btn_saveas.setFixedHeight(32)
         btn_saveas.clicked.connect(self._saveas_software)
         layout.addWidget(btn_saveas)
+
+        layout.addWidget(self._hline())
+
+        layout.addWidget(self._section_title("标签模板"))
+        tag_hint = QLabel("定义发票记录的自定义标签字段，将在表格中作为可编辑列显示。")
+        tag_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        tag_hint.setWordWrap(True)
+        layout.addWidget(tag_hint)
+
+        tag_row = QHBoxLayout()
+        tag_row.setSpacing(8)
+        self.edit_tag_name = QLineEdit()
+        self.edit_tag_name.setPlaceholderText("新标签名（如：项目名称）")
+        self.edit_tag_name.setFixedHeight(32)
+        btn_add_tag = QPushButton("添加标签")
+        btn_add_tag.setFixedHeight(32)
+        btn_add_tag.clicked.connect(self._add_tag_template)
+        tag_row.addWidget(self.edit_tag_name, 1)
+        tag_row.addWidget(btn_add_tag)
+        layout.addLayout(tag_row)
+
+        self.tag_list = QListWidget()
+        self.tag_list.setMaximumHeight(100)
+        self.tag_list.setStyleSheet(f"background:{BG_ALT}; border:none; font-size:12px;")
+        self._load_tag_templates()
+        layout.addWidget(self.tag_list)
+
+        btn_del_tag = QPushButton("删除选中标签")
+        btn_del_tag.setFixedHeight(28)
+        btn_del_tag.clicked.connect(self._del_tag_template)
+        layout.addWidget(btn_del_tag)
 
         layout.addWidget(self._hline())
 
@@ -137,10 +173,10 @@ class SettingsDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         btn_backup = QPushButton("备份数据…")
-        btn_backup.setFixedHeight(28)
+        btn_backup.setFixedHeight(32)
         btn_backup.clicked.connect(self._backup_data)
         btn_restore = QPushButton("恢复数据…")
-        btn_restore.setFixedHeight(28)
+        btn_restore.setFixedHeight(32)
         btn_restore.clicked.connect(self._restore_data)
         btn_row.addWidget(btn_backup)
         btn_row.addWidget(btn_restore)
@@ -150,7 +186,7 @@ class SettingsDialog(QDialog):
         layout.addStretch()
 
         btn_close = QPushButton("关闭")
-        btn_close.setFixedHeight(28)
+        btn_close.setFixedHeight(32)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close, alignment=Qt.AlignRight)
 
@@ -158,6 +194,70 @@ class SettingsDialog(QDialog):
         self.setStyleSheet(DIALOG_QSS)
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
+
+    # ── 标签模板管理 ─────────────────────────────
+
+    def _load_tag_templates(self):
+        self.tag_list.clear()
+        templates = self._get_tag_templates()
+        for name in templates:
+            self.tag_list.addItem(name)
+
+    def _get_tag_templates(self) -> list[str]:
+        try:
+            with open(self._app._config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                return config.get("tag_templates", ["企业号"])
+        except (OSError, json.JSONDecodeError):
+            return ["企业号"]
+
+    def _save_tag_templates(self, templates: list[str]):
+        try:
+            config = {}
+            if os.path.exists(self._app._config_file):
+                with open(self._app._config_file, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            config["tag_templates"] = templates
+            os.makedirs(os.path.dirname(self._app._config_file), exist_ok=True)
+            with open(self._app._config_file, "w", encoding="utf-8") as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def _add_tag_template(self):
+        name = self.edit_tag_name.text().strip()
+        if not name:
+            return
+        templates = self._get_tag_templates()
+        if name in templates:
+            QMessageBox.information(self, "提示", f"标签「{name}」已存在。")
+            return
+        templates.append(name)
+        self._save_tag_templates(templates)
+        self._load_tag_templates()
+        self.edit_tag_name.clear()
+        self._app._tag_templates = templates
+        self._app._rebuild_table()
+
+    def _del_tag_template(self):
+        item = self.tag_list.currentItem()
+        if not item:
+            return
+        name = item.text()
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除标签「{name}」吗？\n\n所有记录中该标签的值将被保留，但不再显示为列。",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        templates = self._get_tag_templates()
+        if name in templates:
+            templates.remove(name)
+        self._save_tag_templates(templates)
+        self._load_tag_templates()
+        self._app._tag_templates = templates
+        self._app._rebuild_table()
 
     # ── 数据目录操作 ────────────────────────────
 
@@ -319,7 +419,7 @@ class SettingsDialog(QDialog):
                 "运行方式：双击 启动.bat 或直接执行 invoice_tool.py"
             )
             try:
-                os.startfile(dst_dir)
+                QDesktopServices.openUrl(QUrl.fromLocalFile(dst_dir))
             except Exception:
                 pass
 
@@ -367,8 +467,12 @@ class SettingsDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
         try:
-            data_dir = self._app._data_dir
+            data_dir = os.path.abspath(self._app._data_dir)
             with zipfile.ZipFile(src, 'r') as zf:
+                for info in zf.infolist():
+                    target = os.path.abspath(os.path.join(data_dir, info.filename))
+                    if not target.startswith(data_dir + os.sep) and target != data_dir:
+                        raise ValueError(f"安全拦截: 路径穿越 {info.filename}")
                 zf.extractall(data_dir)
             self._app.records.clear()
             self._app.table.setRowCount(0)

@@ -8,43 +8,52 @@ import tempfile
 import shutil
 from unittest.mock import MagicMock
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from utils import copy_file_to_dir as _copy_file_to_dir
-from invoice_tool import InvoiceApp
+from utils import copy_file_to_dir as _copy_file_to_dir, safe_float
+from invoice_tool import InvoiceApp, COL_IDX
+from models import Invoice
+from PyQt5.QtWidgets import QApplication, QHBoxLayout
+from PyQt5.QtCore import Qt
+
+_qt_app = QApplication.instance()
+if _qt_app is None:
+    _qt_app = QApplication(sys.argv)
 
 
 # ── _safe_float 测试 ──────────────────────────
 
 class TestSafeFloat(unittest.TestCase):
     def test_positive_integer(self):
-        self.assertEqual(InvoiceApp._safe_float(100), 100.0)
+        self.assertEqual(safe_float(100), 100.0)
 
     def test_float_string(self):
-        self.assertEqual(InvoiceApp._safe_float("550.00"), 550.0)
+        self.assertEqual(safe_float("550.00"), 550.0)
 
     def test_negative_number(self):
-        self.assertEqual(InvoiceApp._safe_float(-100), -100.0)
+        self.assertEqual(safe_float(-100), -100.0)
 
     def test_negative_string(self):
-        self.assertEqual(InvoiceApp._safe_float("-100.50"), -100.5)
+        self.assertEqual(safe_float("-100.50"), -100.5)
 
     def test_empty_string(self):
-        self.assertEqual(InvoiceApp._safe_float(""), 0.0)
+        self.assertEqual(safe_float(""), 0.0)
 
     def test_none(self):
-        self.assertEqual(InvoiceApp._safe_float(None), 0.0)
+        self.assertEqual(safe_float(None), 0.0)
 
     def test_invalid_string(self):
-        self.assertEqual(InvoiceApp._safe_float("abc"), 0.0)
+        self.assertEqual(safe_float("abc"), 0.0)
 
     def test_zero(self):
-        self.assertEqual(InvoiceApp._safe_float(0), 0.0)
-        self.assertEqual(InvoiceApp._safe_float("0"), 0.0)
-        self.assertEqual(InvoiceApp._safe_float("0.00"), 0.0)
+        self.assertEqual(safe_float(0), 0.0)
+        self.assertEqual(safe_float("0"), 0.0)
+        self.assertEqual(safe_float("0.00"), 0.0)
 
     def test_large_number(self):
-        self.assertEqual(InvoiceApp._safe_float("123456789.99"), 123456789.99)
+        self.assertEqual(safe_float("123456789.99"), 123456789.99)
 
 
 # ── _copy_file_to_dir 测试（补充）──────────────
@@ -281,6 +290,7 @@ class TestGetRecordByRow(unittest.TestCase):
             Invoice(invoice_no="AAA", file="a.pdf"),
             Invoice(invoice_no="BBB", file="b.pdf"),
         ]
+        self.app._current_col_idx = COL_IDX
         self.app._shown_records = list(self.app.records)
         # 模拟 table.item 返回 None（无匹配发票号时走 shown 回退）
         self.app.table = MagicMock()
@@ -322,17 +332,103 @@ class TestOnParseError(unittest.TestCase):
 
 class TestSafeFloatExtra(unittest.TestCase):
     def test_boolean_value(self):
-        self.assertEqual(InvoiceApp._safe_float(True), 1.0)
+        self.assertEqual(safe_float(True), 1.0)
 
     def test_whitespace_string(self):
-        self.assertEqual(InvoiceApp._safe_float("   "), 0.0)
+        self.assertEqual(safe_float("   "), 0.0)
 
     def test_comma_in_string(self):
         # 注意：_safe_float 不支持千分位逗号
-        self.assertEqual(InvoiceApp._safe_float("1,200.50"), 0.0)
+        self.assertEqual(safe_float("1,200.50"), 0.0)
 
     def test_scientific_notation(self):
-        self.assertGreater(InvoiceApp._safe_float("1.5e2"), 0.0)
+        self.assertGreater(safe_float("1.5e2"), 0.0)
+
+
+class TestFrozenOperationColumn(unittest.TestCase):
+    def setUp(self):
+        self.old_appdata = os.environ.get("APPDATA")
+        self.tmp_dir = tempfile.mkdtemp()
+        os.environ["APPDATA"] = self.tmp_dir
+        self.window = InvoiceApp()
+        self.window.records = [
+            Invoice.from_dict({
+                "invoice_no": f"NO-{i:03d}",
+                "invoice_date": "2024年06月01日",
+                "invoice_type": "普通发票",
+                "buyer_name": "购买方",
+                "buyer_tax_id": "TAX",
+                "seller_name": "销售方",
+                "amount": "100.00",
+                "tax_rate": "1%",
+                "tax_amount": "1.00",
+                "total": "101.00",
+                "company": "001",
+                "screenshots": [],
+                "contracts": [],
+                "remark": "✓",
+                "pdf_path": "",
+            })
+            for i in range(40)
+        ]
+        self.window.resize(900, 520)
+        self.window.show()
+        self.window._rebuild_table()
+        QApplication.processEvents()
+
+    def tearDown(self):
+        self.window.close()
+        self.window.deleteLater()
+        QApplication.processEvents()
+        if self.old_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = self.old_appdata
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+
+    def test_operation_table_is_layout_managed_beside_main_table(self):
+        table_parent = self.window.table.parentWidget()
+        freeze_parent = self.window._freeze_table.parentWidget()
+
+        self.assertIs(table_parent, freeze_parent)
+        self.assertIsInstance(table_parent.layout(), QHBoxLayout)
+        self.assertGreaterEqual(table_parent.layout().indexOf(self.window.table), 0)
+        self.assertGreaterEqual(table_parent.layout().indexOf(self.window._freeze_table), 0)
+
+    def test_operation_table_rows_and_scroll_stay_synced(self):
+        self.assertEqual(self.window.table.rowCount(), self.window._freeze_table.rowCount())
+
+        for row in range(self.window.table.rowCount()):
+            self.assertEqual(
+                self.window.table.rowHeight(row),
+                self.window._freeze_table.rowHeight(row),
+            )
+
+        main_scroll = self.window.table.verticalScrollBar()
+        freeze_scroll = self.window._freeze_table.verticalScrollBar()
+        main_scroll.setValue(main_scroll.maximum())
+        QApplication.processEvents()
+        self.assertEqual(freeze_scroll.value(), main_scroll.value())
+
+        freeze_scroll.setValue(0)
+        QApplication.processEvents()
+        self.assertEqual(main_scroll.value(), 0)
+
+    def test_horizontal_scroll_does_not_move_operation_table(self):
+        before = self.window._freeze_table.geometry()
+        self.window.table.horizontalScrollBar().setValue(
+            self.window.table.horizontalScrollBar().maximum()
+        )
+        QApplication.processEvents()
+        after = self.window._freeze_table.geometry()
+
+        self.assertEqual(after.x(), before.x())
+        self.assertEqual(after.y(), before.y())
+        self.assertEqual(after.width(), before.width())
+        self.assertEqual(
+            self.window._freeze_table.verticalScrollBarPolicy(),
+            Qt.ScrollBarAlwaysOn,
+        )
 
 
 if __name__ == "__main__":

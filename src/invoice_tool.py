@@ -45,7 +45,7 @@ log = getLogger(__name__)
 # 表格列定义
 COLUMNS = ["发票类型", "购买方名称", "纳税人识别号",
            "销售方名称", "金额(元)", "征收率", "税额(元)", "价税合计(元)",
-           "发票号码", "开票日期", "企业号", "附件", "备注"]
+           "发票号码", "开票日期", "附件", "备注"]
 TABLE_ROW_HEIGHT = 36
 FREEZE_COL_WIDTH = 96  # 冻结操作列宽度
 COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
@@ -60,13 +60,14 @@ class InvoiceApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.records = []
+        self._current_col_idx = COL_IDX
         self._duplicate_invoices = []
-        self.pending_company = ""
         log.info("InvoiceApp 初始化开始")
-        
+
         # 配置文件路径：%APPDATA%\lan-invoice\config.json
         appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
         self._config_file = os.path.join(appdata, 'lan-invoice', 'config.json')
+        self._tag_templates = self._load_tag_templates()
         
         # 先读取配置文件获取数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
         self._data_dir = self._load_config_dir()
@@ -114,6 +115,7 @@ class InvoiceApp(QMainWindow):
             data.setdefault(field, "")
         data.setdefault("screenshots", [])
         data.setdefault("contracts", [])
+        data.setdefault("tags", {})
         data.setdefault("is_red", False)
         if data.get("is_red"):
             for f in ("amount", "tax_amount", "total"):
@@ -177,21 +179,6 @@ class InvoiceApp(QMainWindow):
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
 
-        lbl = QLabel("企业号")
-        lbl.setFixedWidth(50)
-        self.edit_company = QLineEdit()
-        self.edit_company.setPlaceholderText("输入后新导入发票自动填入")
-        self.edit_company.setMinimumWidth(120)
-        self.edit_company.setFixedHeight(32)
-        self.edit_company.textChanged.connect(self._on_company_changed)
-
-        self.btn_apply = QPushButton("应用到已选行")
-        self.btn_apply.setFixedHeight(32)
-        self.btn_apply.clicked.connect(self.apply_company_to_selected)
-
-        top_bar.addWidget(lbl)
-        top_bar.addWidget(self.edit_company, 1)
-        top_bar.addWidget(self.btn_apply)
         top_bar.addSpacing(12)
         top_bar.addWidget(self.btn_export)
         main_layout.addLayout(top_bar)
@@ -287,11 +274,11 @@ class InvoiceApp(QMainWindow):
         self.edit_buyer_search.setFixedHeight(30)
         self.edit_buyer_search.returnPressed.connect(self._apply_filter)
 
-        # 企业号搜索
-        lbl_company_search = QLabel("企业号")
+        # 标签搜索
+        lbl_company_search = QLabel("标签")
         lbl_company_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
         self.edit_company_search = QLineEdit()
-        self.edit_company_search.setPlaceholderText("输入企业号搜索")
+        self.edit_company_search.setPlaceholderText("输入标签搜索")
         self.edit_company_search.setMinimumWidth(100)
         self.edit_company_search.setFixedHeight(30)
         self.edit_company_search.returnPressed.connect(self._apply_filter)
@@ -347,10 +334,10 @@ class InvoiceApp(QMainWindow):
 
         header = self.table.horizontalHeader()
         # 固定列（像素宽度不变）
-        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 11: 100}
+        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 10: 100}
         # 弹性列（最小宽度）
         stretch_cols = {0: 100, 1: 130, 2: 130, 3: 130,
-                        8: 110, 9: 90, 10: 90, 12: 80}
+                        8: 110, 9: 90, 11: 80}
         for col, width in fixed_cols.items():
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
@@ -563,7 +550,7 @@ class InvoiceApp(QMainWindow):
         if self._filter_buyer:
             parts.append(f"购买方:{self._filter_buyer}")
         if self._filter_company:
-            parts.append(f"企业号:{self._filter_company}")
+            parts.append(f"标签:{self._filter_company}")
         self.lbl_filter_hint.setText(f"当前筛选：{'  '.join(parts)}" if parts else "")
 
     def _toggle_advanced_filter(self):
@@ -619,8 +606,57 @@ class InvoiceApp(QMainWindow):
         scroll_val = self.table.verticalScrollBar().value()
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(0)
-        self._shown_records = [r for r in self.records if self._record_matches_filter(r)]
-        shown = self._shown_records
+
+        # Dynamic columns
+        effective_cols = self._get_effective_columns()
+        self.table.setColumnCount(len(effective_cols))
+        self.table.setHorizontalHeaderLabels(effective_cols)
+        # Rebuild COL_IDX
+        self._current_col_idx = {c: i for i, c in enumerate(effective_cols)}
+
+        # Set column resize modes for dynamic layout (use names for stable referencing)
+        header = self.table.horizontalHeader()
+        fixed_widths = {"金额(元)": 88, "征收率": 55, "税额(元)": 88, "价税合计(元)": 98, "附件": 100}
+        stretch_widths = {"发票类型": 100, "购买方名称": 130, "纳税人识别号": 130,
+                          "销售方名称": 130, "发票号码": 110, "开票日期": 90, "备注": 80}
+        for col_name, width in fixed_widths.items():
+            col_idx = self._current_col_idx.get(col_name, -1)
+            if col_idx >= 0:
+                header.setSectionResizeMode(col_idx, QHeaderView.Fixed)
+                self.table.setColumnWidth(col_idx, width)
+        for col_name, width in stretch_widths.items():
+            col_idx = self._current_col_idx.get(col_name, -1)
+            if col_idx >= 0:
+                header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+                self.table.setColumnWidth(col_idx, width)
+        # Tag columns — interactive
+        for tag_name in self._tag_templates:
+            col_idx = self._current_col_idx.get(tag_name, -1)
+            if col_idx >= 0:
+                header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+                self.table.setColumnWidth(col_idx, 90)
+
+        # Update stretch recalculation data
+        self._stretch_cols = {}
+        self._stretch_factors = {}
+        self._stretch_fixed_total = sum(fixed_widths.values())
+        for col_name, width in stretch_widths.items():
+            col_idx = self._current_col_idx.get(col_name, -1)
+            if col_idx >= 0:
+                self._stretch_cols[col_idx] = width
+                self._stretch_factors[col_idx] = width // 10
+        for tag_name in self._tag_templates:
+            col_idx = self._current_col_idx.get(tag_name, -1)
+            if col_idx >= 0:
+                self._stretch_cols[col_idx] = 90
+                self._stretch_factors[col_idx] = 9
+        self._stretch_total_weight = sum(self._stretch_factors.values())
+
+        shown = [r for r in self.records if self._record_matches_filter(r)]
+        # Apply sort if any
+        if getattr(self, '_sort_column', None):
+            shown = self._sort_records(shown, self._sort_column, getattr(self, '_sort_ascending', True))
+        self._shown_records = shown
         for data in shown:
             self._insert_row(data, scroll=False)
         self.table.setUpdatesEnabled(True)
@@ -651,7 +687,7 @@ class InvoiceApp(QMainWindow):
     def _sync_records_from_table(self):
         shown = self._shown_records
         for i in range(self.table.rowCount()):
-            inv_no_item = self.table.item(i, COL_IDX["发票号码"])
+            inv_no_item = self.table.item(i, self._current_col_idx["发票号码"])
             inv_no = inv_no_item.text() if inv_no_item else ""
 
             idx = self._find_record_index(inv_no)
@@ -661,12 +697,21 @@ class InvoiceApp(QMainWindow):
             if rec is None:
                 continue
 
-            co_item = self.table.item(i, COL_IDX["企业号"])
-            bk_item = self.table.item(i, COL_IDX["备注"])
-            if co_item:
-                rec["company"] = co_item.text()
+            bk_item = self.table.item(i, self._current_col_idx["备注"])
             if bk_item and bk_item.text() != "✓":
                 rec["remark"] = bk_item.text()
+
+            # Save tag values from tag columns
+            if isinstance(rec, dict):
+                tags = rec.setdefault("tags", {})
+            else:
+                tags = rec.tags
+            for tag_name in self._tag_templates:
+                tag_col = self._current_col_idx.get(tag_name, -1)
+                if tag_col >= 0:
+                    tag_item = self.table.item(i, tag_col)
+                    if tag_item:
+                        tags[tag_name] = tag_item.text()
 
     def _load_config_dir(self):
         default_dir = os.path.join(os.path.dirname(self._config_file), "data")
@@ -701,6 +746,21 @@ class InvoiceApp(QMainWindow):
         except OSError:
             pass
 
+    # ── 标签模板 ────────────────────────────────
+
+    def _load_tag_templates(self):
+        """从 config.json 读取标签模板列表"""
+        try:
+            with open(self._config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+                return config.get("tag_templates", ["企业号"])
+        except (OSError, json.JSONDecodeError):
+            return ["企业号"]
+
+    def _get_effective_columns(self):
+        """返回固定列 + 标签列"""
+        return COLUMNS[:10] + self._tag_templates + COLUMNS[10:]
+
     def _load_data(self):
         invoices = self._repo.load()
         if not invoices:
@@ -708,18 +768,19 @@ class InvoiceApp(QMainWindow):
             return
         log.info("加载 %d 条历史记录", len(invoices))
         self.records = invoices
-        self._save_locked = True
-        self.table.setUpdatesEnabled(False)
         for inv in self.records:
             self._init_record_fields(inv)
-            self._insert_row(inv, scroll=False)
-        self.table.setUpdatesEnabled(True)
-        self._shown_records = list(self.records)
-        self._refresh_summary()
+        # Migrate old "company" field to tags
+        for inv in self.records:
+            company = inv.get("company", "")
+            if company:
+                tags = inv.get("tags", {})
+                if "企业号" not in tags:
+                    tags["企业号"] = company
+                inv["tags"] = tags
+        self._rebuild_table()
         self._refresh_filter_combos()
         self._save_locked = False
-        self._update_empty_state()
-        self._rebuild_freeze_table()
         self.status.showMessage(f"已自动加载 {len(self.records)} 条历史记录")
 
     # ── 键盘快捷键 ──────────────────────────────
@@ -830,9 +891,6 @@ class InvoiceApp(QMainWindow):
             self._drop_overlay.hide()
 
     # ── 槽函数 ───────────────────────────────────
-    def _on_company_changed(self, text):
-        self.pending_company = text.strip()
-
     def _on_table_clicked(self, index):
         """点击表格行时，在状态栏显示当前行摘要信息"""
         row = index.row()
@@ -853,7 +911,7 @@ class InvoiceApp(QMainWindow):
         if self._save_locked:
             return
         header = self.table.horizontalHeaderItem(col).text()
-        if header in ("企业号", "备注"):
+        if header in ("备注",) or header in self._tag_templates:
             self._save_data()
 
     def closeEvent(self, event):
@@ -936,31 +994,6 @@ class InvoiceApp(QMainWindow):
             self._save_data()
             self.status.showMessage("已清空")
 
-    def apply_company_to_selected(self):
-        rows = set(item.row() for item in self.table.selectedItems())
-        if not rows:
-            QMessageBox.information(self, "提示", "请先在表格中选中需要修改的行")
-            return
-        company = self.pending_company
-        if not company:
-            company, ok = QInputDialog.getText(self, "输入企业号", "企业号：")
-            if not ok or not company:
-                return
-        col = COL_IDX["企业号"]
-        shown = self._shown_records
-        for row in rows:
-            self.table.setItem(row, col, QTableWidgetItem(company))
-            inv_no_item = self.table.item(row, COL_IDX["发票号码"])
-            inv_no = inv_no_item.text() if inv_no_item else ""
-            idx = self._find_record_index(inv_no)
-            rec = self.records[idx] if idx is not None else None
-            if rec is None and 0 <= row < len(shown):
-                rec = shown[row]
-            if rec:
-                rec["company"] = company
-        self.status.showMessage(f"已将企业号「{company}」应用到 {len(rows)} 行")
-        self._save_data()
-
     # ── 解析流程 ─────────────────────────────────
     def _start_parse(self, files):
         self.btn_open.setEnabled(False)
@@ -1025,7 +1058,7 @@ class InvoiceApp(QMainWindow):
             type_text = f"● {inv_type}" if inv_type else ""
             type_fg   = ACCENT
         type_item = cell(type_text, fg=type_fg, bg=row_bg)
-        self.table.setItem(row, COL_IDX["发票类型"], type_item)
+        self.table.setItem(row, self._current_col_idx["发票类型"], type_item)
 
         # 金额列：负数标红（红票金额已在入库时转负）
         def amount_cell(field):
@@ -1034,24 +1067,31 @@ class InvoiceApp(QMainWindow):
             neg = v.startswith('-')
             return cell(v, fg=RED if neg else None, bg=row_bg if row_bg else ("#FFF0F0" if neg else None))
 
-        self.table.setItem(row, COL_IDX["购买方名称"],   cell(data.get("buyer_name", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["纳税人识别号"],  cell(data.get("buyer_tax_id", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["销售方名称"],   cell(data.get("seller_name", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["金额(元)"],     amount_cell("amount"))
-        self.table.setItem(row, COL_IDX["征收率"],       cell(data.get("tax_rate", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["税额(元)"],     amount_cell("tax_amount"))
-        self.table.setItem(row, COL_IDX["价税合计(元)"],  amount_cell("total"))
+        self.table.setItem(row, self._current_col_idx["购买方名称"],   cell(data.get("buyer_name", ""), bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["纳税人识别号"],  cell(data.get("buyer_tax_id", ""), bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["销售方名称"],   cell(data.get("seller_name", ""), bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["金额(元)"],     amount_cell("amount"))
+        self.table.setItem(row, self._current_col_idx["征收率"],       cell(data.get("tax_rate", ""), bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["税额(元)"],     amount_cell("tax_amount"))
+        self.table.setItem(row, self._current_col_idx["价税合计(元)"],  amount_cell("total"))
 
         # 数字列使用等宽字体，保证金额对齐扫描
         _mono = QFont(MONO_FONT, 12)
-        for c in (COL_IDX["金额(元)"], COL_IDX["征收率"], COL_IDX["税额(元)"], COL_IDX["价税合计(元)"]):
+        for c in (self._current_col_idx["金额(元)"], self._current_col_idx["征收率"], self._current_col_idx["税额(元)"], self._current_col_idx["价税合计(元)"]):
             it = self.table.item(row, c)
             if it:
                 it.setFont(_mono)
 
-        self.table.setItem(row, COL_IDX["发票号码"],      cell(data.get("invoice_no", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["开票日期"],      cell(data.get("invoice_date", ""), bg=row_bg))
-        self.table.setItem(row, COL_IDX["企业号"],        cell(data.get("company", ""), editable=True, bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["发票号码"], cell(data.get("invoice_no", ""), bg=row_bg))
+        self.table.setItem(row, self._current_col_idx["开票日期"], cell(data.get("invoice_date", ""), bg=row_bg))
+
+        # Write tag columns
+        tags = data.get("tags", {})
+        for tag_name in self._tag_templates:
+            tag_col = self._current_col_idx.get(tag_name, -1)
+            if tag_col >= 0:
+                tag_value = tags.get(tag_name, "")
+                self.table.setItem(row, tag_col, cell(tag_value, editable=True, bg=row_bg))
 
         self._set_attachment_cell(row, data)
 
@@ -1059,7 +1099,7 @@ class InvoiceApp(QMainWindow):
         remark_item = cell(remark_val, editable=True,
                            fg=RED if data.get("error") else (RED if is_red else (GREEN if remark_val == "✓" else TEXT)),
                            bg=row_bg)
-        self.table.setItem(row, COL_IDX["备注"], remark_item)
+        self.table.setItem(row, self._current_col_idx["备注"], remark_item)
 
         if scroll:
             self.table.scrollToBottom()
@@ -1124,7 +1164,7 @@ class InvoiceApp(QMainWindow):
         if rec not in self.records:
             return
         for i in range(self.table.rowCount()):
-            inv_no_item = self.table.item(i, COL_IDX["发票号码"])
+            inv_no_item = self.table.item(i, self._current_col_idx["发票号码"])
             inv_no = inv_no_item.text() if inv_no_item else ""
             if inv_no == rec.get("invoice_no", ""):
                 self.table.selectRow(i)
@@ -1175,7 +1215,7 @@ class InvoiceApp(QMainWindow):
         btn_add.clicked.connect(lambda _, r=row: self._add_screenshot(r))
         lay.addWidget(btn_add)
         lay.addStretch()
-        self.table.setCellWidget(row, COL_IDX["付款截图"], w)
+        self.table.setCellWidget(row, self._current_col_idx["付款截图"], w)
 
     # ── 合同单元格 ───────────────────────────────
     def _set_contract_cell(self, row, data):
@@ -1208,7 +1248,7 @@ class InvoiceApp(QMainWindow):
         btn_add.clicked.connect(lambda _, r=row: self._add_contract(r))
         lay.addWidget(btn_add)
         lay.addStretch()
-        self.table.setCellWidget(row, COL_IDX["合同"], w)
+        self.table.setCellWidget(row, self._current_col_idx["合同"], w)
 
     # ── 附件单元格（统一截图+合同）─────────────────
     def _set_attachment_cell(self, row, data):
@@ -1243,11 +1283,11 @@ class InvoiceApp(QMainWindow):
         btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
         lay.addWidget(btn_add)
         lay.addStretch()
-        self.table.setCellWidget(row, COL_IDX["附件"], w)
+        self.table.setCellWidget(row, self._current_col_idx["附件"], w)
 
     # ── 截图操作 ─────────────────────────────────
     def _get_record_by_row(self, row):
-        inv_no_item = self.table.item(row, COL_IDX["发票号码"])
+        inv_no_item = self.table.item(row, self._current_col_idx["发票号码"])
         inv_no = inv_no_item.text() if inv_no_item else ""
         idx = self._find_record_index(inv_no)
         if idx is not None:
@@ -1531,7 +1571,7 @@ class InvoiceApp(QMainWindow):
         shown = self._shown_records
         to_delete = []
         for row in rows:
-            inv_no_item = self.table.item(row, COL_IDX["发票号码"])
+            inv_no_item = self.table.item(row, self._current_col_idx["发票号码"])
             inv_no = inv_no_item.text() if inv_no_item else ""
             idx = self._find_record_index(inv_no)
             rec = self.records[idx] if idx is not None else None
@@ -1655,7 +1695,7 @@ class InvoiceApp(QMainWindow):
             return
 
         # 导出列：不含「附件」和「操作」
-        xl_columns = [c for c in COLUMNS if c not in ("附件", "操作")]
+        xl_columns = [c for c in self._get_effective_columns() if c not in ("附件", "操作")]
 
         try:
             wb = openpyxl.Workbook()
@@ -1680,21 +1720,24 @@ class InvoiceApp(QMainWindow):
             normal_align = Alignment(horizontal="left",   vertical="center")
             center_align = Alignment(horizontal="center", vertical="center")
 
+            field_map = {
+                "发票类型": "invoice_type", "购买方名称": "buyer_name",
+                "纳税人识别号": "buyer_tax_id", "销售方名称": "seller_name",
+                "金额(元)": "amount", "征收率": "tax_rate",
+                "税额(元)": "tax_amount", "价税合计(元)": "total",
+                "发票号码": "invoice_no", "开票日期": "invoice_date",
+            }
             for i, rec in enumerate(export_records, 2):
-                row_data = [
-                    rec.get("invoice_type", ""),
-                    rec.get("buyer_name", ""),
-                    rec.get("buyer_tax_id", ""),
-                    rec.get("seller_name", ""),
-                    rec.get("amount", ""),
-                    rec.get("tax_rate", ""),
-                    rec.get("tax_amount", ""),
-                    rec.get("total", ""),
-                    rec.get("invoice_no", ""),
-                    rec.get("invoice_date", ""),
-                    rec.get("company", ""),
-                    rec.get("remark", "") or rec.get("error", "") or "✓"
-                ]
+                row_data = []
+                for col_name in xl_columns:
+                    if col_name in field_map:
+                        row_data.append(rec.get(field_map[col_name], ""))
+                    elif col_name == "备注":
+                        row_data.append(rec.get("remark", "") or rec.get("error", "") or "✓")
+                    else:
+                        # Tag column
+                        tags = rec.get("tags", {})
+                        row_data.append(tags.get(col_name, ""))
                 ws.append(row_data)
                 fill = alt_fill if i % 2 == 0 else None
                 for j, cell in enumerate(ws[i]):
@@ -1723,9 +1766,15 @@ class InvoiceApp(QMainWindow):
                 cell.alignment = center_align
             ws.row_dimensions[sum_row].height = 24
 
-            # 列宽：发票类型, 购买方名称, 税号, 销售方名称, 金额, 税率, 税额, 合计, 发票号, 日期, 企业号, 备注
-            xl_widths = [16, 20, 22, 20, 12, 8, 12, 14, 20, 14, 15, 14]
-            for i, w in enumerate(xl_widths, 1):
+            # 动态列宽
+            base_widths = {
+                "发票类型": 16, "购买方名称": 20, "纳税人识别号": 22,
+                "销售方名称": 20, "金额(元)": 12, "征收率": 8,
+                "税额(元)": 12, "价税合计(元)": 14, "发票号码": 20,
+                "开票日期": 14, "备注": 14,
+            }
+            for i, col_name in enumerate(xl_columns, 1):
+                w = base_widths.get(col_name, 14)  # 标签列默认 14
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
             ws.freeze_panes = "A2"
