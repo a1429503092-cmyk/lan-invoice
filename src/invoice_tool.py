@@ -1546,18 +1546,11 @@ class InvoiceApp(QMainWindow):
 
         self.status.showMessage("剪贴板中没有可用内容（图片或合同文件），请先复制后再粘贴")
 
-    # ── 点击同一行取消选中（viewport 事件过滤器）────
+    # ── viewport 事件过滤器 ────────────────────────
     def eventFilter(self, obj, event):
         if obj is self.table.viewport():
             if event.type() == QEvent.Resize:
                 self._recenter_empty_overlay()
-            elif event.type() == QEvent.MouseButtonPress:
-                if event.button() == Qt.LeftButton:
-                    row = self.table.rowAt(event.pos().y())
-                    selected = self._selected_rows()
-                    if row >= 0 and selected == [row]:
-                        self.table.clearSelection()
-                        return True
         return super().eventFilter(obj, event)
 
 
