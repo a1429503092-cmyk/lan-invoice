@@ -266,6 +266,87 @@ class SettingsDialog(QDialog):
         if d:
             self.edit_data_dir.setText(d)
 
+    def _data_dir_has_content(self, dirpath: str) -> bool:
+        """检查目录是否已有数据内容"""
+        data_file = os.path.join(dirpath, "invoices_data.json")
+        if os.path.exists(data_file) and os.path.getsize(data_file) > 0:
+            return True
+        screenshots_dir = os.path.join(dirpath, "screenshots")
+        if os.path.isdir(screenshots_dir) and os.listdir(screenshots_dir):
+            return True
+        contracts_dir = os.path.join(dirpath, "contracts")
+        if os.path.isdir(contracts_dir) and os.listdir(contracts_dir):
+            return True
+        invoices_dir = os.path.join(dirpath, "invoices")
+        if os.path.isdir(invoices_dir) and os.listdir(invoices_dir):
+            return True
+        return False
+
+    def _switch_to_dir(self, new_dir: str, migrate_old: bool):
+        """执行目录切换"""
+        self._app._save_data()
+
+        if migrate_old:
+            os.makedirs(new_dir, exist_ok=True)
+            os.makedirs(os.path.join(new_dir, "screenshots"), exist_ok=True)
+            os.makedirs(os.path.join(new_dir, "contracts"), exist_ok=True)
+            os.makedirs(os.path.join(new_dir, "invoices"), exist_ok=True)
+            errors = []
+
+            old_data_file = self._app._data_file
+            old_screenshot_dir = self._app._screenshot_dir
+            old_contract_dir = self._app._contract_dir
+            old_inv_dir = os.path.join(self._app._data_dir, "invoices")
+
+            if os.path.exists(old_data_file):
+                try:
+                    shutil.copy2(old_data_file, os.path.join(new_dir, "invoices_data.json"))
+                except Exception as e:
+                    errors.append(f"invoices_data.json: {e}")
+
+            for src_dir, sub in [(old_screenshot_dir, "screenshots"), (old_contract_dir, "contracts"), (old_inv_dir, "invoices")]:
+                if src_dir and os.path.isdir(src_dir):
+                    dst_dir = os.path.join(new_dir, sub)
+                    for fname in os.listdir(src_dir):
+                        src = os.path.join(src_dir, fname)
+                        dst = os.path.join(dst_dir, fname)
+                        try:
+                            if os.path.isfile(src) and not os.path.exists(dst):
+                                shutil.copy2(src, dst)
+                        except Exception as e:
+                            errors.append(f"{sub}/{fname}: {e}")
+
+            if errors:
+                QMessageBox.warning(self, "部分文件迁移失败",
+                                    "以下文件迁移失败：\n\n" + "\n".join(errors))
+
+        # 更新路径
+        self._app._data_dir = new_dir
+        self._app._data_file = os.path.join(new_dir, "invoices_data.json")
+        self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
+        self._app._contract_dir = os.path.join(new_dir, "contracts")
+        self._app._attachment_dir = new_dir
+        os.makedirs(self._app._screenshot_dir, exist_ok=True)
+        os.makedirs(self._app._contract_dir, exist_ok=True)
+        os.makedirs(os.path.join(new_dir, "invoices"), exist_ok=True)
+
+        # 更新 Service
+        from services.invoice_service import InvoiceService
+        from repository import InvoiceRepository
+        self._app._repo = InvoiceRepository(self._app._data_file)
+        self._app._svc = InvoiceService(self._app._repo, self._app._attachment_dir,
+                                         os.path.join(new_dir, "invoices"))
+
+        self._app._save_config_dir(new_dir)
+
+        # 重新加载
+        self._app.records.clear()
+        self._app.table.setRowCount(0)
+        self._app._load_data()
+        self.edit_data_dir.setText(new_dir)
+
+        QMessageBox.information(self, "已切换", f"数据目录已切换为：\n{new_dir}")
+
     def _apply_data_dir(self):
         new_dir = self.edit_data_dir.text().strip()
         if not new_dir or not os.path.isdir(new_dir):
@@ -275,87 +356,39 @@ class SettingsDialog(QDialog):
             QMessageBox.information(self, "无需更改", "目标目录与当前目录相同。")
             return
 
-        old_files_count = 0
-        if os.path.exists(self._app._data_file):
-            old_files_count += 1
-        if os.path.isdir(self._app._screenshot_dir):
-            old_files_count += len(os.listdir(self._app._screenshot_dir))
-        if os.path.isdir(self._app._contract_dir):
-            old_files_count += len(os.listdir(self._app._contract_dir))
+        has_content = self._data_dir_has_content(new_dir)
+        old_has_content = self._data_dir_has_content(self._app._data_dir)
 
-        migration_hint = ""
-        if old_files_count > 0:
-            migration_hint = f"\n\n检测到旧目录有 {old_files_count} 个文件，将自动迁移到新目录。"
+        if has_content:
+            # 新目录已有数据 → 三选一
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("确认数据目录")
+            msg_box.setText(f"目标目录已有数据：\n{new_dir}\n\n请选择处理方式：")
+            btn_keep = msg_box.addButton("保留新目录数据", QMessageBox.AcceptRole)
+            btn_overwrite = msg_box.addButton("用旧数据覆盖", QMessageBox.DestructiveRole)
+            btn_cancel = msg_box.addButton("取消", QMessageBox.RejectRole)
+            msg_box.exec_()
 
-        reply = QMessageBox.question(
-            self, "确认更改数据目录",
-            f"确认将数据目录切换为：\n{new_dir}\n\n"
-            f"新目录下的数据文件会自动加载。\n{migration_hint}"
-            "软件将立即以新目录重新初始化。",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        self._app._save_data()
-
-        if old_files_count > 0:
-            os.makedirs(new_dir, exist_ok=True)
-            os.makedirs(os.path.join(new_dir, "screenshots"), exist_ok=True)
-            os.makedirs(os.path.join(new_dir, "contracts"), exist_ok=True)
-            errors = []
-            old_data_file = self._app._data_file
-            old_screenshot_dir = self._app._screenshot_dir
-            old_contract_dir = self._app._contract_dir
-            if os.path.exists(old_data_file):
-                try:
-                    shutil.copy2(old_data_file, os.path.join(new_dir, "invoices_data.json"))
-                except Exception as e:
-                    errors.append(f"invoices_data.json: {e}")
-            if os.path.isdir(old_screenshot_dir):
-                for fname in os.listdir(old_screenshot_dir):
-                    src = os.path.join(old_screenshot_dir, fname)
-                    dst = os.path.join(new_dir, "screenshots", fname)
-                    try:
-                        if os.path.isfile(src):
-                            shutil.copy2(src, dst)
-                    except Exception as e:
-                        errors.append(f"screenshots/{fname}: {e}")
-            if os.path.isdir(old_contract_dir):
-                for fname in os.listdir(old_contract_dir):
-                    src = os.path.join(old_contract_dir, fname)
-                    dst = os.path.join(new_dir, "contracts", fname)
-                    try:
-                        if os.path.isfile(src):
-                            shutil.copy2(src, dst)
-                    except Exception as e:
-                        errors.append(f"contracts/{fname}: {e}")
-            if errors:
-                QMessageBox.warning(
-                    self, "部分文件迁移失败",
-                    "以下文件迁移失败：\n\n" + "\n".join(errors) +
-                    "\n\n请手动将旧目录文件复制到新目录。"
+            clicked = msg_box.clickedButton()
+            if clicked == btn_keep:
+                self._switch_to_dir(new_dir, migrate_old=False)
+            elif clicked == btn_overwrite:
+                self._switch_to_dir(new_dir, migrate_old=True)
+            # else: cancel — do nothing
+        else:
+            # 新目录为空
+            if old_has_content:
+                reply = QMessageBox.question(
+                    self, "确认数据目录",
+                    f"目标目录为空：\n{new_dir}\n\n是否将旧数据迁移到新目录？",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes
                 )
-
-        self._app._data_dir = new_dir
-        self._app._data_file = os.path.join(new_dir, "invoices_data.json")
-        self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
-        self._app._contract_dir = os.path.join(new_dir, "contracts")
-        os.makedirs(self._app._screenshot_dir, exist_ok=True)
-        os.makedirs(self._app._contract_dir, exist_ok=True)
-
-        self._app._save_config_dir(new_dir)
-
-        self._app.records.clear()
-        self._app.table.setRowCount(0)
-        self._app._load_data()
-
-        QMessageBox.information(
-            self, "已切换",
-            f"数据目录已切换为：\n{new_dir}\n\n"
-            f"旧目录的文件已自动迁移到新目录。\n\n"
-            f"下次启动软件时将自动使用此目录。"
-        )
+                if reply == QMessageBox.Cancel:
+                    return
+                self._switch_to_dir(new_dir, migrate_old=(reply == QMessageBox.Yes))
+            else:
+                self._switch_to_dir(new_dir, migrate_old=False)
 
     # ── 软件另存 ────────────────────────────────
 
