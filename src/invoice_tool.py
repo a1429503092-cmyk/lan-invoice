@@ -429,6 +429,53 @@ class InvoiceApp(QMainWindow):
         self.status.showMessage(
             "就绪 — 拖拽 PDF 导入发票 | 选中行后拖拽图片/文档添加附件 | Ctrl+V 粘贴附件")
 
+        # ── 全局搜索条（默认隐藏）────────────────────
+        self._search_bar = QWidget(self)
+        self._search_bar.setObjectName("searchBar")
+        search_layout = QHBoxLayout(self._search_bar)
+        search_layout.setContentsMargins(8, 4, 8, 4)
+        search_layout.setSpacing(6)
+
+        search_icon = QLabel("🔍")
+        search_icon.setStyleSheet("font-size:14px; background:transparent;")
+
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("输入搜索关键词，搜索所有字段…")
+        self._search_input.setFixedHeight(32)
+
+        self._search_count = QLabel("")
+        self._search_count.setStyleSheet(f"color:{TEXT_SEC}; font-size:12px; background:transparent;")
+
+        btn_search_close = QPushButton("✕")
+        btn_search_close.setFixedSize(24, 24)
+        btn_search_close.setStyleSheet("border:none; background:transparent; font-size:14px; color:" + TEXT_DIM + ";")
+        btn_search_close.clicked.connect(self._close_search)
+
+        btn_search_prev = QPushButton("▲")
+        btn_search_prev.setFixedSize(24, 24)
+        btn_search_prev.setToolTip("上一个匹配")
+        btn_search_prev.setStyleSheet("border:none; background:transparent; font-size:12px; color:" + ACCENT + ";")
+        btn_search_prev.clicked.connect(self._prev_search_match)
+
+        btn_search_next = QPushButton("▼")
+        btn_search_next.setFixedSize(24, 24)
+        btn_search_next.setToolTip("下一个匹配")
+        btn_search_next.setStyleSheet("border:none; background:transparent; font-size:12px; color:" + ACCENT + ";")
+        btn_search_next.clicked.connect(self._next_search_match)
+
+        search_layout.addWidget(search_icon)
+        search_layout.addWidget(self._search_input, 1)
+        search_layout.addWidget(btn_search_prev)
+        search_layout.addWidget(btn_search_next)
+        search_layout.addWidget(self._search_count)
+        search_layout.addWidget(btn_search_close)
+
+        self._search_bar.setStyleSheet(
+            f"QWidget#searchBar {{ background:{ACCENT}; border-radius:6px; }}"
+        )
+        self._search_bar.setGeometry(self.width() - 420, 8, 400, 40)
+        self._search_bar.hide()
+
         self._set_global_style()
         self._save_locked = False
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -837,9 +884,7 @@ class InvoiceApp(QMainWindow):
                 self.export_excel()
                 return
             elif key == Qt.Key_F:
-                # 聚焦第一个筛选控件
-                self.edit_buyer_search.setFocus()
-                self.edit_buyer_search.selectAll()
+                self._open_search()
                 return
             elif key == Qt.Key_V:
                 # Ctrl+V 粘贴截图或合同
@@ -1516,6 +1561,100 @@ class InvoiceApp(QMainWindow):
         return super().eventFilter(obj, event)
 
 
+    # ── 全局搜索 ──────────────────────────────────
+
+    def resizeEvent(self, event):
+        """窗口大小改变时重新定位搜索条"""
+        super().resizeEvent(event)
+        if hasattr(self, '_search_bar') and self._search_bar.isVisible():
+            self._search_bar.setGeometry(self.width() - 420, 8, 400, 40)
+        if hasattr(self, '_drop_overlay'):
+            self._drop_overlay.setGeometry(0, 0, self.width(), self.height())
+
+    def _open_search(self):
+        """打开全局搜索条"""
+        self._search_bar.setGeometry(self.width() - 420, 8, 400, 40)
+        self._search_bar.show()
+        self._search_bar.raise_()
+        self._search_input.setFocus()
+        self._search_input.selectAll()
+        # Connect text change to search
+        try:
+            self._search_input.textChanged.disconnect()
+        except TypeError:
+            pass
+        self._search_input.textChanged.connect(lambda: QTimer.singleShot(200, self._do_search))
+        self._search_matches = []
+        self._current_match_index = -1
+
+    def _close_search(self):
+        """关闭全局搜索条"""
+        self._search_bar.hide()
+        self._search_matches = []
+        self._current_match_index = -1
+        self._highlight_search_row(-1)
+
+    def _do_search(self):
+        """执行搜索"""
+        keyword = self._search_input.text().strip().lower()
+        self._search_matches = []
+        self._current_match_index = -1
+
+        if not keyword:
+            self._search_count.setText("")
+            self._highlight_search_row(-1)
+            return
+
+        # 搜索所有行所有列
+        for row in range(self.table.rowCount()):
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item and keyword in item.text().lower():
+                    self._search_matches.append(row)
+                    break
+
+        self._search_count.setText(f"{len(self._search_matches)} 个匹配")
+        if self._search_matches:
+            self._current_match_index = 0
+            self._jump_to_match(0)
+        else:
+            self._highlight_search_row(-1)
+
+    def _jump_to_match(self, idx):
+        """跳转到第 idx 个匹配行"""
+        if not self._search_matches or idx < 0 or idx >= len(self._search_matches):
+            return
+        self._current_match_index = idx
+        row = self._search_matches[idx]
+        self.table.selectRow(row)
+        self.table.scrollToItem(self.table.item(row, 0), QAbstractItemView.PositionAtCenter)
+        self._highlight_search_row(row)
+        self._search_count.setText(f"{idx + 1} / {len(self._search_matches)}")
+
+    def _next_search_match(self):
+        if not self._search_matches:
+            return
+        idx = (self._current_match_index + 1) % len(self._search_matches)
+        self._jump_to_match(idx)
+
+    def _prev_search_match(self):
+        if not self._search_matches:
+            return
+        idx = (self._current_match_index - 1) % len(self._search_matches)
+        self._jump_to_match(idx)
+
+    def _highlight_search_row(self, row):
+        """高亮搜索匹配行"""
+        # Reset all row backgrounds
+        for r in range(self.table.rowCount()):
+            for c in range(self.table.columnCount()):
+                item = self.table.item(r, c)
+                if item:
+                    bg = item.data(Qt.UserRole + 1)
+                    if bg:
+                        item.setBackground(QColor(bg))
+                    else:
+                        item.setBackground(QColor("transparent" if r % 2 == 0 else "#F8F9FA"))
 
     # ── 右键菜单 ─────────────────────────────────
     def _show_context_menu(self, pos):
