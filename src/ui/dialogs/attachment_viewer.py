@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
-"""统一附件预览对话框 — 按类型自动选择预览方式"""
+"""统一附件预览对话框 — 左侧文件列表 + 右侧直接预览"""
 
 import os
 import shutil
-from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
-    QAbstractItemView
+    QAbstractItemView, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtGui import QDesktopServices, QPixmap
 
 from logger import getLogger
 log = getLogger(__name__)
 
-from ui.theme import ACCENT, RED, DARK_SURFACE, DARK_BG, DARK_TEXT, DARK_TEXT_DIM
+from ui.theme import ACCENT, RED, GREEN, DARK_SURFACE, DARK_BG, DARK_TEXT, DARK_TEXT_DIM
 from ui.dialogs.image_viewer import ImageViewerDialog
 from ui.dialogs.pdf_viewer import PdfViewerDialog
 
@@ -24,6 +23,14 @@ IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
 PDF_EXTS = {'.pdf'}
 
 TYPE_ICONS = {'image': '\U0001F5BC', 'pdf': '\U0001F4C4', 'doc': '\U0001F4CE'}
+
+# 明确定义样式常量，避免主题变量颜色冲突
+LIST_BG = "#252525"
+LIST_TEXT = "#CCCCCC"
+LIST_SELECTED = "#3A5A8C"
+PANEL_BG = "#2B2B2B"
+PANEL_TEXT = "#D0D0D0"
+PANEL_TEXT_SEC = "#999999"
 
 
 class AttachmentViewerDialog(QDialog):
@@ -33,9 +40,10 @@ class AttachmentViewerDialog(QDialog):
         super().__init__(parent)
         self.attachment_paths = list(attachment_paths)
         self._rec_name = rec_name
+        self._preview_pixmap = None
         self.setWindowTitle(f"附件预览 — {rec_name}" if rec_name else "附件预览")
-        self.resize(900, 600)
-        self.setMinimumSize(500, 350)
+        self.resize(1000, 650)
+        self.setMinimumSize(700, 400)
         self._build_ui()
         self._populate_list()
 
@@ -54,35 +62,107 @@ class AttachmentViewerDialog(QDialog):
         layout.setSpacing(8)
 
         body = QHBoxLayout()
-        body.setSpacing(8)
+        body.setSpacing(0)
+
+        # ── 左侧文件列表 ──────────────────────
+        left_panel = QVBoxLayout()
+        left_panel.setSpacing(6)
+
+        lbl_list = QLabel("附件列表")
+        lbl_list.setStyleSheet(f"color:{LIST_TEXT}; font-size:13px; font-weight:bold; background:transparent; padding:4px 8px;")
+        left_panel.addWidget(lbl_list)
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.list_widget.setFixedWidth(280)
+        self.list_widget.setFixedWidth(260)
         self.list_widget.setStyleSheet(
-            f"QListWidget {{ background:{DARK_BG}; border:1px solid #444; }}"
-            f"QListWidget::item {{ padding:6px; }}"
-            f"QListWidget::item:selected {{ background:#3A5A8C; }}"
+            f"QListWidget {{"
+            f"  background:{LIST_BG}; border:1px solid #444; border-radius:4px;"
+            f"  color:{LIST_TEXT}; font-size:12px;"
+            f"}}"
+            f"QListWidget::item {{"
+            f"  padding:8px 10px; color:{LIST_TEXT};"
+            f"}}"
+            f"QListWidget::item:selected {{"
+            f"  background:{LIST_SELECTED}; color:white;"
+            f"}}"
+            f"QListWidget::item:hover {{"
+            f"  background:#333;"
+            f"}}"
         )
         self.list_widget.currentRowChanged.connect(self._on_selection_changed)
-        body.addWidget(self.list_widget)
+        left_panel.addWidget(self.list_widget, 1)
 
-        right = QVBoxLayout()
-        right.setSpacing(8)
-        self.lbl_info = QLabel("选择一个文件查看详情")
-        self.lbl_info.setWordWrap(True)
-        self.lbl_info.setStyleSheet(
-            f"color:{DARK_TEXT}; font-size:13px; "
-            f"background:{DARK_SURFACE}; padding:12px; border-radius:6px;"
+        body.addLayout(left_panel)
+
+        # ── 分隔线 ────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("color:#444;")
+        body.addWidget(sep)
+
+        # ── 右侧预览区 ────────────────────────
+        right_panel = QVBoxLayout()
+        right_panel.setContentsMargins(12, 0, 0, 0)
+        right_panel.setSpacing(8)
+
+        # 预览滚动区域
+        self.preview_scroll = QScrollArea()
+        self.preview_scroll.setWidgetResizable(True)
+        self.preview_scroll.setStyleSheet(
+            f"QScrollArea {{ background:{PANEL_BG}; border:none; border-radius:6px; }}"
+            f"QScrollArea > QWidget > QWidget {{ background:{PANEL_BG}; }}"
         )
-        right.addWidget(self.lbl_info, 1)
-        body.addLayout(right, 1)
+
+        self.preview_container = QFrame()
+        self.preview_container.setStyleSheet(f"background:{PANEL_BG}; border:none;")
+        preview_layout = QVBoxLayout(self.preview_container)
+        preview_layout.setAlignment(Qt.AlignCenter)
+        preview_layout.setSpacing(12)
+
+        self.lbl_preview = QLabel("选择一个文件即可预览")
+        self.lbl_preview.setAlignment(Qt.AlignCenter)
+        self.lbl_preview.setWordWrap(True)
+        self.lbl_preview.setStyleSheet(
+            f"color:{PANEL_TEXT_SEC}; font-size:14px; background:transparent; padding:20px;"
+        )
+        preview_layout.addWidget(self.lbl_preview)
+
+        self.lbl_preview_img = QLabel()
+        self.lbl_preview_img.setAlignment(Qt.AlignCenter)
+        self.lbl_preview_img.hide()
+        self.lbl_preview_img.setStyleSheet("background:transparent;")
+        preview_layout.addWidget(self.lbl_preview_img)
+
+        self.btn_inline_open = QPushButton()
+        self.btn_inline_open.setFixedHeight(40)
+        self.btn_inline_open.setFixedWidth(200)
+        self.btn_inline_open.hide()
+        self.btn_inline_open.setStyleSheet(
+            f"background:{ACCENT}; color:white; font-weight:bold; "
+            "font-size:14px; border-radius:6px; padding:0 20px;"
+        )
+        self.btn_inline_open.clicked.connect(self._inline_open)
+        preview_layout.addWidget(self.btn_inline_open, alignment=Qt.AlignCenter)
+
+        self.preview_scroll.setWidget(self.preview_container)
+        right_panel.addWidget(self.preview_scroll, 1)
+
+        # 文件信息条
+        self.lbl_file_info = QLabel("")
+        self.lbl_file_info.setStyleSheet(
+            f"color:{PANEL_TEXT_SEC}; font-size:11px; background:transparent; padding:4px 8px;"
+        )
+        right_panel.addWidget(self.lbl_file_info)
+
+        body.addLayout(right_panel, 1)
         layout.addLayout(body)
 
+        # ── 底部操作栏 ──────────────────────────
         btn_bar = QHBoxLayout()
         btn_bar.setSpacing(8)
 
-        self.btn_preview = QPushButton("预览")
+        self.btn_preview = QPushButton("独立窗口预览")
         self.btn_preview.setFixedHeight(32)
         self.btn_preview.setEnabled(False)
         self.btn_preview.clicked.connect(self._preview_selected)
@@ -117,8 +197,14 @@ class AttachmentViewerDialog(QDialog):
         btn_bar.addWidget(btn_close)
         layout.addLayout(btn_bar)
 
-        from ui.theme import DIALOG_QSS_DARK
-        self.setStyleSheet(DIALOG_QSS_DARK)
+        # 对话框整体样式
+        self.setStyleSheet(
+            f"QDialog {{ background:{DARK_BG}; }}"
+            f"QPushButton {{ color:{DARK_TEXT}; border:1px solid #555; border-radius:4px; padding:4px 12px; background:#333; }}"
+            f"QPushButton:hover {{ background:#444; }}"
+            f"QPushButton:pressed {{ background:#555; }}"
+            f"QLabel {{ color:{DARK_TEXT}; background:transparent; }}"
+        )
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
 
@@ -128,9 +214,10 @@ class AttachmentViewerDialog(QDialog):
             cat = self._classify(path)
             icon_text = TYPE_ICONS.get(cat, '\U0001F4CE')
             exists = os.path.exists(path)
-            display = f"{icon_text} {name}" if exists else f"❌ {name}（已移动）"
+            display = f"{icon_text}  {name}" if exists else f"❌  {name}（已移动）"
             item = QListWidgetItem(display)
             item.setData(Qt.UserRole, path)
+            item.setForeground(Qt.gray if not exists else Qt.white)
             self.list_widget.addItem(item)
 
     def _on_selection_changed(self, row):
@@ -142,21 +229,80 @@ class AttachmentViewerDialog(QDialog):
         path = item.data(Qt.UserRole)
         if not path:
             return
+
         exists = os.path.exists(path)
         name = os.path.basename(path)
-        size = f"{os.path.getsize(path) / 1024:.1f} KB" if exists else "—"
         cat = self._classify(path)
+
+        if exists:
+            size_kb = os.path.getsize(path) / 1024
+            size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb / 1024:.2f} MB"
+        else:
+            size_str = "—"
+
         cat_label = {'image': '图片', 'pdf': 'PDF文档', 'doc': '文档'}.get(cat, '其他')
-        self.lbl_info.setText(
-            f"<b>{name}</b><br>"
-            f"<span style='color:{DARK_TEXT_DIM};'>类型：{cat_label}</span><br>"
-            f"<span style='color:{DARK_TEXT_DIM};'>大小：{size}</span><br>"
-            f"<span style='color:{DARK_TEXT_DIM};'>路径：{path}</span>"
-        )
+        self.lbl_file_info.setText(f"{cat_label}  |  {size_str}  |  {name}")
+
+        self.lbl_preview_img.hide()
+        self.btn_inline_open.hide()
+        self.lbl_preview.hide()
+
+        if cat == 'image':
+            self._show_image_preview(path, exists)
+        elif cat == 'pdf':
+            self._show_pdf_preview(path, exists)
+        else:
+            self._show_doc_preview(path, exists)
+
         self.btn_preview.setEnabled(exists)
         self.btn_sys_open.setEnabled(exists)
         self.btn_download.setEnabled(exists)
         self.btn_remove.setEnabled(True)
+
+    def _show_image_preview(self, path, exists):
+        if exists:
+            pix = QPixmap(path)
+            if not pix.isNull():
+                avail_w = self.preview_scroll.width() - 30
+                avail_h = self.preview_scroll.height() - 30
+                if pix.width() > avail_w or pix.height() > avail_h:
+                    pix = pix.scaled(avail_w, avail_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.lbl_preview_img.setPixmap(pix)
+                self.lbl_preview_img.show()
+                return
+        self.lbl_preview.setText("无法预览此图片" if exists else "文件不存在")
+        self.lbl_preview.show()
+
+    def _show_pdf_preview(self, path, exists):
+        if exists:
+            self.btn_inline_open.setText("📄 打开 PDF 预览")
+            self.btn_inline_open.show()
+            self.lbl_preview.setText("PDF 文件 — 点击下方按钮预览")
+            self.lbl_preview.show()
+        else:
+            self.lbl_preview.setText("文件不存在")
+            self.lbl_preview.show()
+
+    def _show_doc_preview(self, path, exists):
+        if exists:
+            self.btn_inline_open.setText("🔗 用系统程序打开")
+            self.btn_inline_open.show()
+            self.lbl_preview.setText(f"文档文件 — 点击下方按钮打开\n\n{os.path.basename(path)}")
+            self.lbl_preview.show()
+        else:
+            self.lbl_preview.setText("文件不存在")
+            self.lbl_preview.show()
+
+    def _inline_open(self):
+        path = self._get_selected_path()
+        if not path or not os.path.exists(path):
+            return
+        cat = self._classify(path)
+        if cat == 'pdf':
+            dialog = PdfViewerDialog(path, parent=self)
+            dialog.exec_()
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _get_selected_path(self):
         item = self.list_widget.currentItem()
