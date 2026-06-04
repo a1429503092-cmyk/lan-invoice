@@ -763,49 +763,71 @@ class InvoiceApp(QMainWindow):
     def dragEnterEvent(self, e: QDragEnterEvent):
         if e.mimeData().hasUrls():
             e.acceptProposedAction()
+            self._show_drop_overlay(e.mimeData().urls())
+
+    def dragLeaveEvent(self, e):
+        self._hide_drop_overlay()
 
     def dropEvent(self, e: QDropEvent):
+        self._hide_drop_overlay()
         urls = e.mimeData().urls()
-        pdf_files      = []
-        img_files      = []
-        contract_files = []
+        pdf_files  = []
+        img_files  = []
+        doc_files  = []
 
         for u in urls:
             path = u.toLocalFile()
             ext  = os.path.splitext(path)[1].lower()
-            if ext in IMG_EXTS:
+            if ext == '.pdf':
+                pdf_files.append(path)   # PDF 始终作为发票导入
+            elif ext in IMG_EXTS:
                 img_files.append(path)
             elif ext in CONTRACT_EXTS:
-                # PDF 需区分：是发票还是合同？
-                # 规则：如果有选中行 → 作为合同；没有选中行 → 作为发票
-                rows = set(item.row() for item in self.table.selectedItems())
-                if ext == '.pdf' and not rows:
-                    pdf_files.append(path)
-                else:
-                    contract_files.append(path)
+                doc_files.append(path)
 
+        # PDF → 发票导入（不依赖选中状态）
         if pdf_files:
             self._start_parse(pdf_files)
 
+        # 图片/文档 → 附件（需要选中行）
         rows = sorted(set(item.row() for item in self.table.selectedItems()))
-
-        if img_files:
+        other_files = img_files + doc_files
+        if other_files:
             if not rows:
                 QMessageBox.information(
                     self, "提示",
-                    "请先在表格中选中一行，再将图片拖拽到窗口，\n图片将被添加到该行的付款截图。"
+                    "请先选中一行，再将图片/文档拖入作为附件添加。\n"
+                    "PDF 文件将始终作为发票导入。"
                 )
             else:
-                self._add_screenshots_from_paths(rows[0], img_files)
+                self._add_attachments_from_paths(rows[0], other_files)
 
-        if contract_files:
-            if not rows:
-                QMessageBox.information(
-                    self, "提示",
-                    "请先在表格中选中一行，再将合同文件拖拽到窗口，\n文件将被添加到该行的合同。"
-                )
+    def _show_drop_overlay(self, urls):
+        if not hasattr(self, '_drop_overlay'):
+            self._drop_overlay = QLabel(self)
+            self._drop_overlay.setAlignment(Qt.AlignCenter)
+            self._drop_overlay.setStyleSheet(
+                "background: rgba(30, 111, 191, 200); color: white; "
+                "font-size: 18px; font-weight: bold; border-radius: 12px;"
+            )
+        pdf_count = sum(1 for u in urls if u.toLocalFile().lower().endswith('.pdf'))
+        other_count = len(urls) - pdf_count
+        parts = []
+        if pdf_count:
+            parts.append(f"导入 {pdf_count} 个发票 PDF")
+        if other_count:
+            rows = set(item.row() for item in self.table.selectedItems())
+            if rows:
+                parts.append(f"添加 {other_count} 个附件到选中行")
             else:
-                self._add_contracts_from_paths(rows[0], contract_files)
+                parts.append(f"⚠ 需选中行以添加 {other_count} 个附件")
+        self._drop_overlay.setText("\n".join(parts))
+        self._drop_overlay.setGeometry(0, 0, self.width(), self.height())
+        self._drop_overlay.show()
+
+    def _hide_drop_overlay(self):
+        if hasattr(self, '_drop_overlay'):
+            self._drop_overlay.hide()
 
     # ── 槽函数 ───────────────────────────────────
     def _on_company_changed(self, text):
@@ -1261,6 +1283,21 @@ class InvoiceApp(QMainWindow):
             self._save_data()
             self.status.showMessage(f"已为该发票添加 {added} 份合同")
 
+    # ── 统一附件添加 ─────────────────────────────
+    def _add_attachments_from_paths(self, row, src_paths):
+        """统一添加附件（图片+文档）"""
+        rec = self._get_record_by_row(row)
+        if rec is None:
+            return
+        added = self._svc.add_attachments(rec, src_paths, "attachments",
+                                          self._attachment_dir,
+                                          InvoiceService._attachment_namer)
+        if added > 0:
+            # Fallback: use _set_screenshot_cell until _set_attachment_cell is added
+            self._set_screenshot_cell(row, rec)
+            self._save_data()
+            self.status.showMessage(f"已添加 {added} 个附件")
+
     def _view_contracts(self, row):
         """打开合同管理对话框"""
         rec = self._get_record_by_row(row)
@@ -1298,33 +1335,27 @@ class InvoiceApp(QMainWindow):
                 inv_no    = rec.get("invoice_no", "") or rec.get("file", "unnamed")
                 safe_name = re.sub(r'[\\/:*?"<>|]', '_', inv_no)
                 ts  = datetime.now().strftime("%Y%m%d%H%M%S%f")
-                dst = os.path.join(self._screenshot_dir, f"{safe_name}_{ts}.png")
+                dst = os.path.join(self._attachment_dir, f"{safe_name}_{ts}.png")
                 try:
                     img.save(dst, "PNG")
-                    rec.setdefault("screenshots", []).append(dst)
+                    rec.setdefault("attachments", []).append(dst)
                     self._set_screenshot_cell(row, rec)
                     self._save_data()
-                    self.status.showMessage("已从剪贴板粘贴图片并添加为付款截图")
+                    self.status.showMessage("已从剪贴板粘贴图片并添加为附件")
                 except Exception as ex:
                     QMessageBox.warning(self, "粘贴失败", f"保存剪贴板图片失败：{ex}")
                 return
 
         # 文件路径
         if mime.hasUrls():
-            img_files      = []
-            contract_files = []
+            other_files = []
             for u in mime.urls():
                 path = u.toLocalFile()
                 ext  = os.path.splitext(path)[1].lower()
-                if ext in IMG_EXTS:
-                    img_files.append(path)
-                elif ext in CONTRACT_EXTS:
-                    contract_files.append(path)
-            if img_files:
-                self._add_screenshots_from_paths(row, img_files)
-            if contract_files:
-                self._add_contracts_from_paths(row, contract_files)
-            if img_files or contract_files:
+                if ext in IMG_EXTS or ext in CONTRACT_EXTS:
+                    other_files.append(path)
+            if other_files:
+                self._add_attachments_from_paths(row, other_files)
                 return
 
         self.status.showMessage("剪贴板中没有可用内容（图片或合同文件），请先复制后再粘贴")
