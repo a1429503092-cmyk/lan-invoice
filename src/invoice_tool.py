@@ -95,6 +95,11 @@ class InvoiceApp(QMainWindow):
         # 通过键盘修饰键区分：Alt=截图, Shift=合同, 无修饰=PDF
         self._drag_mode = None
         self._shown_records = []   # 当前筛选后的记录缓存，_rebuild_table 时更新
+        self._sort_column = None
+        self._sort_ascending = True
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.timeout.connect(self._apply_filter)
 
         self._init_ui()
         self.setAcceptDrops(True)
@@ -208,6 +213,9 @@ class InvoiceApp(QMainWindow):
         for i in range(1, 13):
             self.combo_month.addItem(f"{i:02d} 月", i)
 
+        self.combo_year.currentIndexChanged.connect(self._apply_filter)
+        self.combo_month.currentIndexChanged.connect(self._apply_filter)
+
         # 高级筛选切换按钮
         self.btn_advanced_filter = QPushButton("▸ 高级筛选")
         self.btn_advanced_filter.setFixedHeight(30)
@@ -215,14 +223,9 @@ class InvoiceApp(QMainWindow):
         self.btn_advanced_filter.setCursor(Qt.PointingHandCursor)
         self.btn_advanced_filter.clicked.connect(self._toggle_advanced_filter)
 
-        self.btn_filter = QPushButton("筛 选")
-        self.btn_filter.setFixedHeight(30)
-        self.btn_filter.setFixedWidth(70)
-        self.btn_filter.clicked.connect(self._apply_filter)
-
-        self.btn_reset = QPushButton("重置")
+        self.btn_reset = QPushButton("清除筛选")
         self.btn_reset.setFixedHeight(30)
-        self.btn_reset.setFixedWidth(60)
+        self.btn_reset.setFixedWidth(80)
         self.btn_reset.clicked.connect(self._reset_filter)
 
         self.lbl_filter_hint = QLabel("")
@@ -235,7 +238,6 @@ class InvoiceApp(QMainWindow):
         filter_bar.addWidget(self.combo_month)
         filter_bar.addWidget(self.btn_advanced_filter)
         filter_bar.addStretch()
-        filter_bar.addWidget(self.btn_filter)
         filter_bar.addWidget(self.btn_reset)
         filter_bar.addWidget(self.lbl_filter_hint)
         main_layout.addLayout(filter_bar)
@@ -265,6 +267,9 @@ class InvoiceApp(QMainWindow):
         self.combo_seller.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_seller.addItem("全部", None)
 
+        self.combo_inv_type.currentIndexChanged.connect(self._apply_filter)
+        self.combo_seller.currentIndexChanged.connect(self._apply_filter)
+
         # 购买方名称/税号搜索
         lbl_buyer_search = QLabel("购买方")
         lbl_buyer_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
@@ -272,7 +277,7 @@ class InvoiceApp(QMainWindow):
         self.edit_buyer_search.setPlaceholderText("名称或税号")
         self.edit_buyer_search.setMinimumWidth(120)
         self.edit_buyer_search.setFixedHeight(30)
-        self.edit_buyer_search.returnPressed.connect(self._apply_filter)
+        self.edit_buyer_search.textChanged.connect(lambda: self._filter_timer.start(300))
 
         # 标签搜索
         lbl_company_search = QLabel("标签")
@@ -281,7 +286,7 @@ class InvoiceApp(QMainWindow):
         self.edit_company_search.setPlaceholderText("输入标签搜索")
         self.edit_company_search.setMinimumWidth(100)
         self.edit_company_search.setFixedHeight(30)
-        self.edit_company_search.returnPressed.connect(self._apply_filter)
+        self.edit_company_search.textChanged.connect(lambda: self._filter_timer.start(300))
 
         adv_layout.addWidget(lbl_type)
         adv_layout.addWidget(self.combo_inv_type, 1)
@@ -362,6 +367,9 @@ class InvoiceApp(QMainWindow):
         self.table.resizeEvent = _on_table_resize
 
         self.table.setStyleSheet(TABLE_QSS)
+
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(self._on_header_clicked)
 
         # ── 表格区域：主表格横向滚动，右侧操作列冻结 ──
         table_area = QWidget()
@@ -551,7 +559,7 @@ class InvoiceApp(QMainWindow):
             parts.append(f"购买方:{self._filter_buyer}")
         if self._filter_company:
             parts.append(f"标签:{self._filter_company}")
-        self.lbl_filter_hint.setText(f"当前筛选：{'  '.join(parts)}" if parts else "")
+        self.lbl_filter_hint.setText(f"筛选：{'  '.join(parts)}" if parts else "")
 
     def _toggle_advanced_filter(self):
         self._show_advanced_filter = not self._show_advanced_filter
@@ -582,6 +590,38 @@ class InvoiceApp(QMainWindow):
             rec, self._filter_year, self._filter_month,
             self._filter_inv_type, self._filter_seller,
             self._filter_buyer, self._filter_company)
+
+    def _on_header_clicked(self, logical_index):
+        """列头点击排序：升序→降序→取消"""
+        header_labels = self._get_effective_columns()
+        if logical_index >= len(header_labels):
+            return
+        col_name = header_labels[logical_index]
+
+        current_order = getattr(self, '_sort_column', None)
+        current_asc = getattr(self, '_sort_ascending', True)
+
+        if current_order == col_name:
+            if current_asc:
+                self._sort_ascending = False
+            else:
+                self._sort_column = None
+                self._rebuild_table()
+                return
+        else:
+            self._sort_column = col_name
+            self._sort_ascending = True
+
+        self._rebuild_table()
+
+    def _sort_records(self, records: list, col_name: str, ascending: bool) -> list:
+        """对记录列表排序"""
+        numeric_cols = {"金额(元)", "征收率", "税额(元)", "价税合计(元)"}
+        if col_name in numeric_cols:
+            key_fn = lambda r: safe_float(r.get(col_name, ""))
+        else:
+            key_fn = lambda r: str(r.get(col_name, "")).lower()
+        return sorted(records, key=key_fn, reverse=not ascending)
 
     def _recenter_empty_overlay(self):
         """让空状态提示在 viewport 中居中"""
