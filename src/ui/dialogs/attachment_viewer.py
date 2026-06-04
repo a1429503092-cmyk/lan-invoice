@@ -7,7 +7,7 @@ import shutil
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
-    QAbstractItemView, QScrollArea, QFrame
+    QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget
 )
 from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtGui import QDesktopServices, QPixmap
@@ -61,11 +61,13 @@ class AttachmentViewerDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        body = QHBoxLayout()
-        body.setSpacing(0)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
 
         # ── 左侧文件列表 ──────────────────────
-        left_panel = QVBoxLayout()
+        left_widget = QWidget()
+        left_panel = QVBoxLayout(left_widget)
+        left_panel.setContentsMargins(0, 0, 0, 0)
         left_panel.setSpacing(6)
 
         lbl_list = QLabel("附件列表")
@@ -74,7 +76,7 @@ class AttachmentViewerDialog(QDialog):
 
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.list_widget.setFixedWidth(260)
+        self.list_widget.setMinimumWidth(180)
         self.list_widget.setStyleSheet(
             f"QListWidget {{"
             f"  background:{LIST_BG}; border:1px solid #444; border-radius:4px;"
@@ -92,17 +94,11 @@ class AttachmentViewerDialog(QDialog):
         )
         self.list_widget.currentRowChanged.connect(self._on_selection_changed)
         left_panel.addWidget(self.list_widget, 1)
-
-        body.addLayout(left_panel)
-
-        # ── 分隔线 ────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("color:#444;")
-        body.addWidget(sep)
+        self.splitter.addWidget(left_widget)
 
         # ── 右侧预览区 ────────────────────────
-        right_panel = QVBoxLayout()
+        right_widget = QWidget()
+        right_panel = QVBoxLayout(right_widget)
         right_panel.setContentsMargins(12, 0, 0, 0)
         right_panel.setSpacing(8)
 
@@ -154,9 +150,11 @@ class AttachmentViewerDialog(QDialog):
             f"color:{PANEL_TEXT_SEC}; font-size:11px; background:transparent; padding:4px 8px;"
         )
         right_panel.addWidget(self.lbl_file_info)
+        self.splitter.addWidget(right_widget)
 
-        body.addLayout(right_panel, 1)
-        layout.addLayout(body)
+        # 初始比例：左侧 260px，右侧占满
+        self.splitter.setSizes([260, self.width() - 260])
+        layout.addWidget(self.splitter, 1)
 
         # ── 底部操作栏 ──────────────────────────
         btn_bar = QHBoxLayout()
