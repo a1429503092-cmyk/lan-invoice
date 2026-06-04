@@ -177,7 +177,7 @@ class InvoiceApp(QMainWindow):
         self.btn_export.setStyleSheet(
             f"background:{ACCENT}; color:white; font-weight:bold; border:none; padding:0 12px;")
         self.btn_export.setCursor(Qt.PointingHandCursor)
-        self.btn_export.setFixedWidth(110)
+        self.btn_export.setFixedWidth(120)
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
@@ -315,17 +315,23 @@ class InvoiceApp(QMainWindow):
         self.summary_frame.setFrameShape(QFrame.StyledPanel)
         self.summary_frame.setStyleSheet(SUMMARY_FRAME_QSS)
         sum_layout = QHBoxLayout(self.summary_frame)
-        sum_layout.setContentsMargins(20, 8, 20, 8)
-        sum_layout.setSpacing(48)
+        sum_layout.setContentsMargins(20, 10, 20, 10)
+        sum_layout.setSpacing(0)
 
         self.lbl_count     = self._stat_label("发票总数", "0 张")
         self.lbl_total_amt = self._stat_label("金额合计", "¥ 0.00")
         self.lbl_total_tax = self._stat_label("税额合计", "¥ 0.00")
         self.lbl_total_all = self._stat_label("价税合计", "¥ 0.00")
 
-        for w in [self.lbl_count, self.lbl_total_amt, self.lbl_total_tax, self.lbl_total_all]:
-            sum_layout.addWidget(w)
-        sum_layout.addStretch()
+        stat_widgets = [self.lbl_count, self.lbl_total_amt, self.lbl_total_tax, self.lbl_total_all]
+        for i, w in enumerate(stat_widgets):
+            sum_layout.addWidget(w, 1)
+            if i < len(stat_widgets) - 1:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.VLine)
+                sep.setFixedHeight(28)
+                sep.setStyleSheet(f"color:{ACCENT_BORDER};")
+                sum_layout.addWidget(sep)
         main_layout.addWidget(self.summary_frame)
 
         # ── 主表格 ───────────────────────────────
@@ -334,6 +340,7 @@ class InvoiceApp(QMainWindow):
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -479,12 +486,12 @@ class InvoiceApp(QMainWindow):
     def _stat_label(self, title, value):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(1)
+        v.setContentsMargins(8, 0, 8, 0)
+        v.setSpacing(2)
         lbl_t = QLabel(title)
-        lbl_t.setStyleSheet(f"color:{TEXT_SEC}; font-size:{FS_SM};")
+        lbl_t.setStyleSheet(f"color:{TEXT_SEC}; font-size:{FS_SM}; background:transparent;")
         lbl_v = QLabel(value)
-        lbl_v.setStyleSheet(f"color:{ACCENT}; font-size:17px; font-weight:bold;")
+        lbl_v.setStyleSheet(f"color:{ACCENT}; font-size:16px; font-weight:bold; background:transparent;")
         v.addWidget(lbl_t)
         v.addWidget(lbl_v)
         w._value_label = lbl_v
