@@ -31,6 +31,8 @@ class TestInvoiceDefaults(unittest.TestCase):
         self.assertEqual(inv.contracts, [])
         self.assertEqual(inv.remark, "")
         self.assertEqual(inv.error, "")
+        self.assertEqual(inv.tags, {})
+        self.assertEqual(inv.attachments, [])
 
 
 class TestInvoiceToDict(unittest.TestCase):
@@ -41,6 +43,8 @@ class TestInvoiceToDict(unittest.TestCase):
         self.assertEqual(d["is_red"], False)
         self.assertEqual(d["screenshots"], [])
         self.assertEqual(d["contracts"], [])
+        self.assertEqual(d["tags"], {})
+        self.assertEqual(d["attachments"], [])
 
     def test_full_invoice(self):
         inv = Invoice(
@@ -202,6 +206,63 @@ class TestInvoiceDictCompat(unittest.TestCase):
         inv = Invoice(screenshots=["a.png"])
         inv.setdefault("screenshots", ["default.png"])
         self.assertEqual(inv.screenshots, ["a.png"])
+
+
+class TestInvoiceTags(unittest.TestCase):
+    def test_tags_default_empty(self):
+        inv = Invoice()
+        self.assertEqual(inv.tags, {})
+
+    def test_tags_roundtrip(self):
+        inv = Invoice(
+            invoice_no="12345",
+            tags={"企业号": "14786", "项目名称": "2026Q1"},
+        )
+        d = inv.to_dict()
+        self.assertEqual(d["tags"]["企业号"], "14786")
+        self.assertEqual(d["tags"]["项目名称"], "2026Q1")
+
+    def test_tags_from_dict(self):
+        d = {"invoice_no": "X", "tags": {"企业号": "A001", "负责人": "张三"}}
+        inv = Invoice.from_dict(d)
+        self.assertEqual(inv.tags["企业号"], "A001")
+        self.assertEqual(inv.tags["负责人"], "张三")
+
+    def test_tags_from_dict_none(self):
+        inv = Invoice.from_dict({"invoice_no": "X"})
+        self.assertEqual(inv.tags, {})
+
+    def test_setitem_tags(self):
+        inv = Invoice()
+        inv["tags"] = {"企业号": "B001"}
+        self.assertEqual(inv.tags, {"企业号": "B001"})
+
+    def test_getitem_tags(self):
+        inv = Invoice(tags={"企业号": "C001"})
+        self.assertEqual(inv["tags"]["企业号"], "C001")
+
+
+class TestInvoiceAttachments(unittest.TestCase):
+    def test_attachments_default_empty(self):
+        inv = Invoice()
+        self.assertEqual(inv.attachments, [])
+
+    def test_attachments_roundtrip(self):
+        inv = Invoice(
+            invoice_no="12345",
+            attachments=["/data/attachments/a.png", "/data/attachments/b.pdf"],
+        )
+        d = inv.to_dict()
+        self.assertEqual(d["attachments"], ["/data/attachments/a.png", "/data/attachments/b.pdf"])
+
+    def test_attachments_from_dict(self):
+        d = {"invoice_no": "X", "attachments": ["/path/a.png"]}
+        inv = Invoice.from_dict(d)
+        self.assertEqual(inv.attachments, ["/path/a.png"])
+
+    def test_attachments_from_dict_none(self):
+        inv = Invoice.from_dict({"invoice_no": "X"})
+        self.assertEqual(inv.attachments, [])
 
 
 if __name__ == "__main__":

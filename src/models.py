@@ -23,6 +23,8 @@ class Invoice:
     is_red: bool = False
     screenshots: list[str] = field(default_factory=list)
     contracts: list[str] = field(default_factory=list)
+    tags: dict[str, str] = field(default_factory=dict)
+    attachments: list[str] = field(default_factory=list)
     remark: str = ""
     error: str = ""
 
@@ -47,6 +49,8 @@ class Invoice:
             "is_red": self.is_red,
             "screenshots": list(self.screenshots),
             "contracts": list(self.contracts),
+            "tags": dict(self.tags),
+            "attachments": list(self.attachments),
             "remark": self.remark,
             "error": self.error,
         }
@@ -71,6 +75,8 @@ class Invoice:
             is_red=bool(d.get("is_red", False)),
             screenshots=list(d.get("screenshots", [])),
             contracts=list(d.get("contracts", [])),
+            tags=dict(d.get("tags", {})),
+            attachments=list(d.get("attachments", [])),
             remark=d.get("remark", ""),
             error=d.get("error", ""),
         )
