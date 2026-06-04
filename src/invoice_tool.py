@@ -1479,10 +1479,11 @@ class InvoiceApp(QMainWindow):
 
     # ── 统一附件操作 ─────────────────────────────
     def _add_attachment(self, row):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "选择附件文件", "",
-            "附件文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.pdf *.docx *.doc *.xlsx *.xls);;所有文件 (*)"
-        )
+        from ui.dialogs.add_attachment import AddAttachmentDialog
+        dlg = AddAttachmentDialog(parent=self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+        files = dlg.get_files()
         if files:
             self._add_attachments_from_paths(row, files)
 
