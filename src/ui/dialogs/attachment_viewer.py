@@ -20,10 +20,12 @@ from ui.theme import ACCENT, RED, GREEN, DARK_SURFACE, DARK_BG, DARK_TEXT, DARK_
 from ui.dialogs.image_viewer import ImageViewerDialog
 from ui.dialogs.pdf_viewer import PdfViewerDialog
 
+from ui.icons import get as get_icon
+
 IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
 PDF_EXTS = {'.pdf'}
 
-TYPE_ICONS = {'image': '\U0001F5BC', 'pdf': '\U0001F4C4', 'doc': '\U0001F4CE'}
+TYPE_ICONS = {'image': 'camera', 'pdf': 'document', 'doc': 'paperclip'}
 
 # 明确定义样式常量，避免主题变量颜色冲突
 LIST_BG = "#252525"
@@ -208,13 +210,15 @@ class AttachmentViewerDialog(QDialog):
             btn.setCursor(Qt.PointingHandCursor)
 
     def _populate_list(self):
+        from PyQt5.QtGui import QIcon
         for path in self.attachment_paths:
             name = os.path.basename(path)
             cat = self._classify(path)
-            icon_text = TYPE_ICONS.get(cat, '\U0001F4CE')
+            icon_name = TYPE_ICONS.get(cat, 'paperclip')
+            icon = get_icon(icon_name)
             exists = os.path.exists(path)
-            display = f"{icon_text}  {name}" if exists else f"❌  {name}（已移动）"
-            item = QListWidgetItem(display)
+            display = name if exists else f"❌ {name}（已移动）"
+            item = QListWidgetItem(icon, display)
             item.setData(Qt.UserRole, path)
             item.setForeground(Qt.gray if not exists else Qt.white)
             self.list_widget.addItem(item)

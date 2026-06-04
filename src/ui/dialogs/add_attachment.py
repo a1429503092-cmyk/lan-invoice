@@ -15,7 +15,9 @@ PDF_EXTS = {'.pdf'}
 DOC_EXTS = {'.docx', '.doc', '.xlsx', '.xls'}
 VALID_EXTS = IMG_EXTS | PDF_EXTS | DOC_EXTS
 
-TYPE_ICONS = {'image': '\U0001F5BC', 'pdf': '\U0001F4C4', 'doc': '\U0001F4CE'}
+from ui.icons import get as get_icon
+
+TYPE_ICONS = {'image': 'camera', 'pdf': 'document', 'doc': 'paperclip'}
 
 PANEL_BG = "#2B2B2B"
 PANEL_TEXT = "#CCCCCC"
@@ -145,9 +147,10 @@ class AddAttachmentDialog(QDialog):
             if path in existing:
                 continue
             cat = self._classify(path)
-            icon = TYPE_ICONS.get(cat, '\U0001F4CE')
+            icon_name = TYPE_ICONS.get(cat, 'paperclip')
+            icon = get_icon(icon_name)
             name = os.path.basename(path)
-            item = QListWidgetItem(f"{icon}  {name}")
+            item = QListWidgetItem(icon, name)
             item.setData(Qt.UserRole, path)
             self.list_widget.addItem(item)
             self._pending_files.append((path, cat))
