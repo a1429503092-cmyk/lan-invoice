@@ -428,7 +428,7 @@ class TestFrozenOperationColumn(unittest.TestCase):
         self.assertEqual(after.width(), before.width())
         self.assertEqual(
             self.window._freeze_table.verticalScrollBarPolicy(),
-            Qt.ScrollBarAlwaysOn,
+            Qt.ScrollBarAsNeeded,
         )
 
 
