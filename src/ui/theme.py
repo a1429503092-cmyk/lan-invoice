@@ -59,6 +59,7 @@ QPushButton {{
     color: {TEXT};
     font-size: {FS};
     font-family: "{FONT}";
+    font-weight: 500;
 }}
 QPushButton:hover {{
     background: {BG_HOVER};
@@ -77,8 +78,10 @@ QLineEdit {{
     border: 1px solid {BORDER};
     padding: 4px 8px;
     font-size: {FS};
+    font-family: "{FONT}";
     background: {WHITE};
     color: {TEXT};
+    font-weight: 500;
 }}
 QLineEdit:focus {{
     border-color: {ACCENT};
@@ -88,8 +91,10 @@ QComboBox {{
     border: 1px solid {BORDER};
     padding: 3px 8px;
     font-size: {FS};
+    font-family: "{FONT}";
     background: {WHITE};
     color: {TEXT};
+    font-weight: 500;
 }}
 QComboBox:hover {{
     border-color: {TEXT_DIM};
