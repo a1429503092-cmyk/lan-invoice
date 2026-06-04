@@ -7,19 +7,20 @@ import shutil
 from datetime import datetime
 from models import Invoice
 from repository import InvoiceRepository
+from logger import getLogger
+
+log = getLogger(__name__)
 
 
 class InvoiceService:
     """发票业务编排：导入、删除、附件管理"""
 
     def __init__(self, repository: InvoiceRepository,
-                 screenshot_dir: str, contract_dir: str, invoice_dir: str):
+                 attachment_dir: str, invoice_dir: str):
         self._repo = repository
-        self._screenshot_dir = screenshot_dir
-        self._contract_dir = contract_dir
+        self._attachment_dir = attachment_dir
         self._invoice_dir = invoice_dir
-        os.makedirs(screenshot_dir, exist_ok=True)
-        os.makedirs(contract_dir, exist_ok=True)
+        os.makedirs(attachment_dir, exist_ok=True)
         os.makedirs(invoice_dir, exist_ok=True)
 
     # ── 数据存取 ────────────────────────────────
@@ -75,20 +76,21 @@ class InvoiceService:
                 added += 1
             except OSError:
                 continue
+        log.info("附件添加: %s +%d → %s (发票=%s)", field, added, target_dir,
+                 inv.invoice_no or inv.file or "?")
         return added
 
     @staticmethod
-    def screenshot_namer(src: str, safe_name: str) -> str:
-        ext = os.path.splitext(src)[1].lower() or ".png"
-        ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        return f"{safe_name}_{ts}{ext}"
-
-    @staticmethod
-    def contract_namer(src: str, safe_name: str) -> str:
-        ext = os.path.splitext(src)[1].lower()
+    def _attachment_namer(src: str, safe_name: str) -> str:
+        """统一附件命名：保留原名 + 时间戳"""
+        ext = os.path.splitext(src)[1].lower() or ".dat"
         orig_base = os.path.splitext(os.path.basename(src))[0]
         ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
         return f"{safe_name}_{orig_base}_{ts}{ext}"
+
+    # Backward-compatible aliases (deprecated)
+    screenshot_namer = _attachment_namer
+    contract_namer = _attachment_namer
 
     def copy_invoice_pdf(self, src: str) -> str:
         """复制发票 PDF 到 data/invoices/"""
@@ -107,6 +109,8 @@ class InvoiceService:
             try:
                 os.remove(path)
                 deleted += 1
+                log.debug("PDF 文件已删除: %s", path)
             except OSError as e:
                 failed.append(f"{os.path.basename(path)}：{e}")
+                log.warning("PDF 删除失败: %s | %s", path, e)
         return deleted, failed

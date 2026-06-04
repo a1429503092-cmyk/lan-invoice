@@ -19,12 +19,11 @@ class TestInvoiceService(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.data_file = os.path.join(self.tmp, "data.json")
-        self.screenshot_dir = os.path.join(self.tmp, "screenshots")
-        self.contract_dir = os.path.join(self.tmp, "contracts")
+        self.attachment_dir = os.path.join(self.tmp, "attachments")
         self.invoice_dir = os.path.join(self.tmp, "invoices")
         self.repo = InvoiceRepository(self.data_file)
         self.svc = InvoiceService(
-            self.repo, self.screenshot_dir, self.contract_dir, self.invoice_dir
+            self.repo, self.attachment_dir, self.invoice_dir
         )
 
     def tearDown(self):
@@ -93,13 +92,13 @@ class TestInvoiceService(unittest.TestCase):
             f.write(b"fake png")
 
         added = self.svc.add_attachments(
-            inv, [src], "screenshots", self.screenshot_dir,
+            inv, [src], "attachments", self.attachment_dir,
             self.svc.screenshot_namer
         )
         self.assertEqual(added, 1)
-        self.assertEqual(len(inv.screenshots), 1)
-        self.assertTrue(os.path.exists(inv.screenshots[0]))
-        self.assertIn("TEST001", os.path.basename(inv.screenshots[0]))
+        self.assertEqual(len(inv.attachments), 1)
+        self.assertTrue(os.path.exists(inv.attachments[0]))
+        self.assertIn("TEST001", os.path.basename(inv.attachments[0]))
 
     def test_add_contracts(self):
         inv = Invoice(invoice_no="TEST002")
@@ -108,17 +107,17 @@ class TestInvoiceService(unittest.TestCase):
             f.write(b"fake pdf")
 
         added = self.svc.add_attachments(
-            inv, [src], "contracts", self.contract_dir,
+            inv, [src], "attachments", self.attachment_dir,
             self.svc.contract_namer
         )
         self.assertEqual(added, 1)
-        self.assertEqual(len(inv.contracts), 1)
-        self.assertIn("合同", os.path.basename(inv.contracts[0]))
+        self.assertEqual(len(inv.attachments), 1)
+        self.assertIn("合同", os.path.basename(inv.attachments[0]))
 
     def test_add_attachments_skip_missing(self):
         inv = Invoice()
         added = self.svc.add_attachments(
-            inv, ["/nonexistent.png"], "screenshots", self.screenshot_dir,
+            inv, ["/nonexistent.png"], "attachments", self.attachment_dir,
             self.svc.screenshot_namer
         )
         self.assertEqual(added, 0)
@@ -130,7 +129,7 @@ class TestInvoiceService(unittest.TestCase):
         with open(src, "wb") as f:
             f.write(b"x")
         added = self.svc.add_attachments(
-            inv, [src], "screenshots", self.screenshot_dir,
+            inv, [src], "attachments", self.attachment_dir,
             self.svc.screenshot_namer
         )
         self.assertEqual(added, 1)
@@ -169,11 +168,11 @@ class TestInvoiceService(unittest.TestCase):
 
     def test_screenshot_namer(self):
         name = InvoiceService.screenshot_namer("/path/to/img.PNG", "INV001")
-        self.assertTrue(name.startswith("INV001_"))
+        self.assertTrue(name.startswith("INV001_img_"))
         self.assertTrue(name.endswith(".png"))
-        # 无扩展名文件默认 .png
+        # 无扩展名文件默认 .dat
         name2 = InvoiceService.screenshot_namer("/path/to/img", "INV001")
-        self.assertTrue(name2.endswith(".png"))
+        self.assertTrue(name2.endswith(".dat"))
 
     def test_contract_namer(self):
         name = InvoiceService.contract_namer("/path/to/合同文件.pdf", "INV002")
@@ -214,8 +213,7 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.svc = InvoiceService(
             MagicMock(),  # repository not needed for attachment tests
-            os.path.join(self.tmp, "ss"),
-            os.path.join(self.tmp, "ct"),
+            os.path.join(self.tmp, "att"),
             os.path.join(self.tmp, "inv"),
         )
 
@@ -232,11 +230,11 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
             files.append(p)
 
         added = self.svc.add_attachments(
-            inv, files, "screenshots", self.svc._screenshot_dir,
+            inv, files, "attachments", self.svc._attachment_dir,
             InvoiceService.screenshot_namer
         )
         self.assertEqual(added, 3)
-        self.assertEqual(len(inv.screenshots), 3)
+        self.assertEqual(len(inv.attachments), 3)
 
     def test_mixed_existing_and_missing(self):
         inv = Invoice(invoice_no="MIXED")
@@ -245,23 +243,23 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
             f.write(b"x")
 
         added = self.svc.add_attachments(
-            inv, [good, "/nonexistent/bad.png"], "screenshots",
-            self.svc._screenshot_dir, InvoiceService.screenshot_namer
+            inv, [good, "/nonexistent/bad.png"], "attachments",
+            self.svc._attachment_dir, InvoiceService.screenshot_namer
         )
         self.assertEqual(added, 1)
 
     def test_add_to_existing_attachments(self):
-        inv = Invoice(invoice_no="APPEND", screenshots=["existing.png"])
+        inv = Invoice(invoice_no="APPEND", attachments=["existing.png"])
         src = os.path.join(self.tmp, "new.png")
         with open(src, "wb") as f:
             f.write(b"data")
 
         added = self.svc.add_attachments(
-            inv, [src], "screenshots", self.svc._screenshot_dir,
+            inv, [src], "attachments", self.svc._attachment_dir,
             InvoiceService.screenshot_namer
         )
         self.assertEqual(added, 1)
-        self.assertEqual(len(inv.screenshots), 2)
+        self.assertEqual(len(inv.attachments), 2)
 
 
 # ── delete_invoice_files 补充 ───────────────
@@ -302,7 +300,7 @@ class TestAddAttachmentsOSError(TestInvoiceService):
             f.write(b"x")
         with unittest.mock.patch("shutil.copy2", side_effect=OSError("mock fail")):
             added = self.svc.add_attachments(
-                inv, [src], "screenshots", self.svc._screenshot_dir,
+                inv, [src], "attachments", self.svc._attachment_dir,
                 InvoiceService.screenshot_namer
             )
         self.assertEqual(added, 0)

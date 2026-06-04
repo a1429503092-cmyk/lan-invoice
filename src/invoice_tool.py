@@ -22,26 +22,32 @@ from PyQt5.QtWidgets import (
     QComboBox, QMenu, QInputDialog, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
-from PyQt5.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont
+from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont
 
-from dialogs import (ImageViewerDialog, InvoiceManagerDialog,
-                     ContractManagerDialog, SettingsDialog, DeleteConfirmDialog)
+from dialogs import (ImageViewerDialog, ContractManagerDialog,
+                     SettingsDialog, DeleteConfirmDialog)
 from worker import ParseWorker
 from filters import (record_matches_filter, get_available_years,
                      get_available_inv_types, get_available_sellers)
 from models import Invoice
 from repository import InvoiceRepository
+from utils import safe_float
 from services.invoice_service import InvoiceService
 from ui.icons import get as get_icon
 from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
                        ACCENT, RED, GREEN, TEXT, TEXT_SEC, TEXT_DIM,
-                       MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
+                       BORDER_LIGHT, MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
+from version import APP_VERSION
+from logger import setup_logging, shutdown_logging, getLogger
+log = getLogger(__name__)
 
 
 # 表格列定义
-COLUMNS = ["序号", "发票PDF", "发票类型", "购买方名称", "纳税人识别号",
+COLUMNS = ["发票类型", "购买方名称", "纳税人识别号",
            "销售方名称", "金额(元)", "征收率", "税额(元)", "价税合计(元)",
            "发票号码", "开票日期", "企业号", "付款截图", "合同", "备注"]
+TABLE_ROW_HEIGHT = 36
+FREEZE_COL_WIDTH = 96  # 冻结操作列宽度
 COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
 
 # 支持的文件扩展名
@@ -50,12 +56,12 @@ CONTRACT_EXTS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls'}  # 合同支持格式
 
 
 class InvoiceApp(QMainWindow):
-    APP_VERSION = "5.1"
 
     def __init__(self):
         super().__init__()
         self.records = []
         self.pending_company = ""
+        log.info("InvoiceApp 初始化开始")
         
         # 配置文件路径：%APPDATA%\lan-invoice\config.json
         appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
@@ -64,6 +70,7 @@ class InvoiceApp(QMainWindow):
         # 先读取配置文件获取数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
         self._data_dir = self._load_config_dir()
         self._data_file      = os.path.join(self._data_dir, "invoices_data.json")
+        self._attachment_dir = self._data_dir
         self._screenshot_dir = os.path.join(self._data_dir, "screenshots")
         self._contract_dir   = os.path.join(self._data_dir, "contracts")
         os.makedirs(self._data_dir,       exist_ok=True)
@@ -71,8 +78,7 @@ class InvoiceApp(QMainWindow):
         os.makedirs(self._contract_dir,   exist_ok=True)
 
         self._repo = InvoiceRepository(self._data_file)
-        self._svc  = InvoiceService(self._repo, self._screenshot_dir,
-                                     self._contract_dir,
+        self._svc  = InvoiceService(self._repo, self._attachment_dir,
                                      os.path.join(self._data_dir, "invoices"))
 
         self._filter_year        = None
@@ -91,6 +97,8 @@ class InvoiceApp(QMainWindow):
         self._init_ui()
         self.setAcceptDrops(True)
         self._load_data()
+        log.info("InvoiceApp 初始化完成 | 版本=%s | 数据目录=%s",
+                 APP_VERSION, self._data_dir)
         QTimer.singleShot(500, self._check_desktop_shortcut)
 
     # ── 记录辅助方法 ────────────────────────────
@@ -123,7 +131,7 @@ class InvoiceApp(QMainWindow):
 
     # ── UI 构建 ─────────────────────────────────
     def _init_ui(self):
-        self.setWindowTitle(f"发票归档 v{self.APP_VERSION}")
+        self.setWindowTitle(f"发票归档 v{APP_VERSION}")
         self._set_app_icon()
         self.resize(1480, 820)
         self.setMinimumSize(1000, 640)
@@ -333,16 +341,15 @@ class InvoiceApp(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
-        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.verticalHeader().setDefaultSectionSize(TABLE_ROW_HEIGHT)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         header = self.table.horizontalHeader()
-        header.setStretchLastSection(False)
-        # 固定列（像素宽度不变）：序号 金额 征收率 税额 价税合计 付款截图 合同
-        fixed_cols = {0: 45, 6: 88, 7: 55, 8: 88, 9: 98, 13: 90, 14: 90}
-        # 弹性列（最小宽度，剩余空间按比例分配）：
-        #   发票PDF 发票类型 购买方 税号 销售方 发票号 日期 企业号 备注
-        stretch_cols = {1: 120, 2: 100, 3: 130, 4: 130, 5: 130,
-                        10: 110, 11: 90, 12: 90, 15: 80}
+        # 固定列（像素宽度不变）
+        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 11: 90, 12: 90}
+        # 弹性列（最小宽度）
+        stretch_cols = {0: 100, 1: 130, 2: 130, 3: 130,
+                        8: 110, 9: 90, 10: 90, 13: 80}
         for col, width in fixed_cols.items():
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
@@ -367,7 +374,58 @@ class InvoiceApp(QMainWindow):
         self.table.resizeEvent = _on_table_resize
 
         self.table.setStyleSheet(TABLE_QSS)
-        main_layout.addWidget(self.table)
+
+        # ── 表格区域：主表格横向滚动，右侧操作列冻结 ──
+        table_area = QWidget()
+        table_area_layout = QHBoxLayout(table_area)
+        table_area_layout.setContentsMargins(0, 0, 0, 0)
+        table_area_layout.setSpacing(0)
+        table_area_layout.addWidget(self.table, 1)
+
+        self._freeze_table = QTableWidget(table_area)
+        self._freeze_table.setColumnCount(1)
+        self._freeze_table.setHorizontalHeaderLabels(["操作"])
+        self._freeze_table.setFixedWidth(FREEZE_COL_WIDTH)
+        self._freeze_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._freeze_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._freeze_table.verticalHeader().hide()
+        self._freeze_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self._freeze_table.setColumnWidth(0, FREEZE_COL_WIDTH)
+        self._freeze_table.verticalHeader().setDefaultSectionSize(TABLE_ROW_HEIGHT)
+        self._freeze_table.setShowGrid(False)
+        self._freeze_table.setFocusPolicy(Qt.NoFocus)
+        self._freeze_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._freeze_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self._freeze_table.setStyleSheet(
+            TABLE_QSS +
+            "QTableWidget { border: none; border-left: 1px solid " + BORDER_LIGHT + "; }"
+            "QHeaderView::section { border-right: none; }"
+        )
+        self._freeze_table.hide()
+        table_area_layout.addWidget(self._freeze_table, 0)
+        main_layout.addWidget(table_area)
+
+        # 同步垂直滚动
+        self.table.verticalScrollBar().valueChanged.connect(
+            self._freeze_table.verticalScrollBar().setValue)
+        self._freeze_table.verticalScrollBar().valueChanged.connect(
+            self.table.verticalScrollBar().setValue)
+
+        # ── 空状态引导 ────────────────────────────
+        self._empty_overlay = QLabel(self.table.viewport())
+        self._empty_overlay.setAlignment(Qt.AlignCenter)
+        self._empty_overlay.setWordWrap(True)
+        self._empty_overlay.setStyleSheet(
+            f"color:{TEXT_DIM}; font-size:13px; background:transparent;"
+            "padding:40px;"
+        )
+        self._empty_overlay.setText(
+            "拖拽 PDF 文件到此处导入发票\n"
+            "或点击「打开」按钮选择文件"
+        )
+        self._empty_overlay.hide()
+        # 跟随 viewport 居中
+        self._recenter_empty_overlay()
 
         # ── 状态栏 ───────────────────────────────
         self.status = QStatusBar()
@@ -537,15 +595,35 @@ class InvoiceApp(QMainWindow):
             self._filter_inv_type, self._filter_seller,
             self._filter_buyer, self._filter_company)
 
+    def _recenter_empty_overlay(self):
+        """让空状态提示在 viewport 中居中"""
+        if not hasattr(self, '_empty_overlay'):
+            return
+        vp = self.table.viewport()
+        w = vp.width() - 60
+        self._empty_overlay.setGeometry(30, (vp.height() - 100) // 2, w, 100)
+
+    def _update_empty_state(self):
+        """根据记录数显示/隐藏空状态引导"""
+        if not hasattr(self, '_empty_overlay'):
+            return
+        if len(self.records) == 0:
+            self._empty_overlay.show()
+            self._recenter_empty_overlay()
+        else:
+            self._empty_overlay.hide()
+
     def _rebuild_table(self):
         self._save_locked = True
+        scroll_val = self.table.verticalScrollBar().value()
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(0)
         self._shown_records = [r for r in self.records if self._record_matches_filter(r)]
         shown = self._shown_records
         for data in shown:
             self._insert_row(data, scroll=False)
-        self.table.setUpdatesEnabled(True)    # 恢复 UI，一次性刷新
+        self.table.setUpdatesEnabled(True)
+        self.table.verticalScrollBar().setValue(min(scroll_val, self.table.verticalScrollBar().maximum()))
         self._refresh_summary_from_list(shown)
         self._save_locked = False
         active = any([self._filter_year, self._filter_month,
@@ -556,13 +634,17 @@ class InvoiceApp(QMainWindow):
             self.status.showMessage(
                 "开始使用：拖拽 PDF 发票到窗口即可自动识别归档 | "
                 "Ctrl+O 导入 PDF | Ctrl+E 导出 Excel | Delete 删除选中行")
+        self._update_empty_state()
+        self._rebuild_freeze_table()
 
     # ── 数据持久化 ──────────────────────────────
     def _save_data(self):
         try:
             self._sync_records_from_table()
             self._repo.save(self.records)
+            log.debug("数据已保存: %d 条", len(self.records))
         except (OSError, IOError) as e:
+            log.error("数据保存失败: %s", e)
             self.status.showMessage(f"数据保存失败: {e}")
 
     def _sync_records_from_table(self):
@@ -621,7 +703,9 @@ class InvoiceApp(QMainWindow):
     def _load_data(self):
         invoices = self._repo.load()
         if not invoices:
+            log.info("无历史数据，初始化空列表")
             return
+        log.info("加载 %d 条历史记录", len(invoices))
         self.records = invoices
         self._save_locked = True
         self.table.setUpdatesEnabled(False)
@@ -633,6 +717,8 @@ class InvoiceApp(QMainWindow):
         self._refresh_summary()
         self._refresh_filter_combos()
         self._save_locked = False
+        self._update_empty_state()
+        self._rebuild_freeze_table()
         self.status.showMessage(f"已自动加载 {len(self.records)} 条历史记录")
 
     # ── 键盘快捷键 ──────────────────────────────
@@ -749,9 +835,12 @@ class InvoiceApp(QMainWindow):
             self._save_data()
 
     def closeEvent(self, event):
+        log.info("应用关闭…")
         if hasattr(self, '_worker') and self._worker.isRunning():
+            log.debug("等待后台线程结束…")
             self._worker.abort()
-            self._worker.wait(3000)
+            if not self._worker.wait(3000):
+                log.warning("后台线程未在3秒内结束")
         self._save_data()
         event.accept()
 
@@ -869,6 +958,7 @@ class InvoiceApp(QMainWindow):
 
     def _on_parse_error(self, error_msg):
         self._parse_errors.append(error_msg)
+        log.warning("解析错误: %s", error_msg)
         self.status.showMessage(f"解析错误: {error_msg}")
 
     # ── 批量导入专用槽（纯内存操作，不碰 UI）────────────────
@@ -886,7 +976,7 @@ class InvoiceApp(QMainWindow):
     def _insert_row(self, data: dict, scroll: bool = True):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setRowHeight(row, 36)
+        self.table.setRowHeight(row, TABLE_ROW_HEIGHT)
 
         is_red = data.get("is_red", False)
 
@@ -903,9 +993,6 @@ class InvoiceApp(QMainWindow):
         # 红票整行浅红背景
         row_bg = "#FFE4E4" if is_red else None
 
-        self.table.setItem(row, COL_IDX["序号"],         cell(row + 1, bg=row_bg))
-        # 发票PDF列：显示文件名 + 查看按钮（内嵌 widget）
-        self._set_invoice_pdf_cell(row, data)
 
         # 发票类型：红票显示"● 红票-类型"，蓝票显示"● 类型"
         inv_type = data.get("invoice_type", "")
@@ -956,51 +1043,84 @@ class InvoiceApp(QMainWindow):
         if scroll:
             self.table.scrollToBottom()
 
-    # ── 发票PDF单元格 ────────────────────────────
-    def _set_invoice_pdf_cell(self, row, data):
-        """发票PDF列：文件名 + 查看按钮"""
-        fname    = data.get("file", "")
-        pdf_path = data.get("pdf_path", "")
-        exists   = bool(pdf_path) and os.path.exists(pdf_path)
+    # ── 冻结操作列 ────────────────────────────────
 
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(4)
+    def _rebuild_freeze_table(self):
+        """重建冻结表格（与 _rebuild_table 同步调用）"""
+        freeze = self._freeze_table
+        freeze.setRowCount(0)
+        shown = self._shown_records
+        if not shown:
+            freeze.hide()
+            return
+        freeze.setRowCount(len(shown))
+        freeze.horizontalHeader().setFixedHeight(self.table.horizontalHeader().height())
+        btn_style = "font-size:12px; padding:2px 4px; border:none; background:transparent;"
 
-        lbl = QLabel()
-        # 超长文件名截断
-        fm = lbl.fontMetrics()
-        display_name = fm.elidedText(fname, Qt.ElideRight, 180)
-        lbl.setText(display_name)
-        lbl.setStyleSheet(
-            f"font-size:12px; color:{ACCENT if exists else TEXT_DIM};"
-        )
-        lbl.setToolTip(pdf_path or "（路径未记录）")
-        lay.addWidget(lbl, 1)
+        for i, rec in enumerate(shown):
+            freeze.setRowHeight(i, self.table.rowHeight(i))
+            w = QWidget()
+            lay = QHBoxLayout(w)
+            lay.setContentsMargins(2, 2, 2, 2)
+            lay.setSpacing(2)
 
-        if exists:
-            btn_v = QPushButton("查看")
-            btn_v.setFixedHeight(24)
-            btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
-            btn_v.setToolTip("打开 / 下载发票原文件")
-            btn_v.clicked.connect(lambda _, r=row: self._view_invoice_pdf(r))
-            lay.addWidget(btn_v)
+            pdf_path = rec.get("pdf_path", "")
+            if pdf_path and os.path.exists(pdf_path):
+                btn_pdf = QPushButton("查看")
+                btn_pdf.setFixedHeight(22)
+                btn_pdf.setStyleSheet(btn_style + f"color:{ACCENT};")
+                btn_pdf.setCursor(Qt.PointingHandCursor)
+                btn_pdf.clicked.connect(self._make_pdf_handler(rec))
+                lay.addWidget(btn_pdf)
 
-        self.table.setCellWidget(row, COL_IDX["发票PDF"], w)
+            btn_del = QPushButton("删除")
+            btn_del.setFixedHeight(22)
+            btn_del.setStyleSheet(btn_style + f"color:{TEXT_DIM};")
+            btn_del.setCursor(Qt.PointingHandCursor)
+            btn_del.clicked.connect(self._make_delete_handler(rec))
+            lay.addWidget(btn_del)
+            lay.addStretch()
+            freeze.setCellWidget(i, 0, w)
+
+        freeze.show()
+        freeze.verticalScrollBar().setValue(self.table.verticalScrollBar().value())
+
+    def _make_pdf_handler(self, rec):
+        return lambda: self._view_invoice_pdf_by_rec(rec)
+
+    def _make_delete_handler(self, rec):
+        return lambda: self._delete_record(rec)
+
+    def _view_invoice_pdf_by_rec(self, rec):
+        path = rec.get("pdf_path", "")
+        if not path or not os.path.exists(path):
+            QMessageBox.warning(self, "文件不存在", "PDF 文件不存在或已被移动。")
+            return
+        from ui.dialogs.pdf_viewer import PdfViewerDialog
+        PdfViewerDialog(path, parent=self).exec_()
+
+    def _delete_record(self, rec):
+        if rec not in self.records:
+            return
+        for i in range(self.table.rowCount()):
+            inv_no_item = self.table.item(i, COL_IDX["发票号码"])
+            inv_no = inv_no_item.text() if inv_no_item else ""
+            if inv_no == rec.get("invoice_no", ""):
+                self.table.selectRow(i)
+                break
+        self._delete_selected_rows()
 
     def _view_invoice_pdf(self, row):
-        """打开发票PDF查看/下载对话框"""
+        """打开 PDF 预览窗口（内嵌下载/系统打开等操作）"""
         rec = self._get_record_by_row(row)
         if rec is None:
             return
-        dlg = InvoiceManagerDialog(
-            pdf_path=rec.get("pdf_path", ""),
-            rec_name=rec.get("buyer_name", "") or rec.get("file", ""),
-            rec_no=rec.get("invoice_no", ""),
-            parent=self
-        )
+        path = rec.get("pdf_path", "")
+        if not path or not os.path.exists(path):
+            QMessageBox.warning(self, "文件不存在", "PDF 文件不存在或已被移动。")
+            return
+        from ui.dialogs.pdf_viewer import PdfViewerDialog
+        dlg = PdfViewerDialog(path, parent=self)
         dlg.exec_()
 
     # ── 截图单元格 ───────────────────────────────
@@ -1017,7 +1137,7 @@ class InvoiceApp(QMainWindow):
             btn_v = QPushButton("查看")
             btn_v.setFixedHeight(24)
             btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet("font-size:11px; padding:1px 4px;")
+            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
             btn_v.clicked.connect(lambda _, r=row: self._view_screenshots(r))
             lay.addWidget(lbl)
             lay.addWidget(btn_v)
@@ -1111,6 +1231,12 @@ class InvoiceApp(QMainWindow):
             return
         dlg = ImageViewerDialog(screenshots, parent=self)
         dlg.exec_()
+        # 同步删除操作
+        remaining = dlg.get_remaining_paths()
+        if len(remaining) != len(screenshots):
+            rec["screenshots"] = remaining
+            self._set_screenshot_cell(row, rec)
+            self._save_data()
 
     # ── 合同操作 ─────────────────────────────────
     def _add_contract(self, row):
@@ -1205,14 +1331,16 @@ class InvoiceApp(QMainWindow):
 
     # ── 点击同一行取消选中（viewport 事件过滤器）────
     def eventFilter(self, obj, event):
-        if obj is self.table.viewport() and event.type() == QEvent.MouseButtonPress:
-            if event.button() == Qt.LeftButton:
-                row = self.table.rowAt(event.pos().y())
-                selected = self._selected_rows()
-                if row >= 0 and selected == [row]:
-                    # 再次点击同一已选中行 → 取消选中
-                    self.table.clearSelection()
-                    return True   # 消费事件，不再触发选中
+        if obj is self.table.viewport():
+            if event.type() == QEvent.Resize:
+                self._recenter_empty_overlay()
+            elif event.type() == QEvent.MouseButtonPress:
+                if event.button() == Qt.LeftButton:
+                    row = self.table.rowAt(event.pos().y())
+                    selected = self._selected_rows()
+                    if row >= 0 and selected == [row]:
+                        self.table.clearSelection()
+                        return True
         return super().eventFilter(obj, event)
 
 
@@ -1332,6 +1460,8 @@ class InvoiceApp(QMainWindow):
         self._save_data()
 
         msg = f"已删除 {len(to_delete)} 条记录"
+        log.info("删除 %d 条记录 (PDF 成功 %d, 失败 %d)",
+                 len(to_delete), deleted_files, len(failed_files))
         if deleted_files:
             msg += f"，{deleted_files} 个PDF文件已删除"
         if failed_files:
@@ -1347,9 +1477,9 @@ class InvoiceApp(QMainWindow):
 
     def _refresh_summary_from_list(self, recs):
         count     = len(recs)
-        total_amt = sum(self._safe_float(r.get("amount"))     for r in recs)
-        total_tax = sum(self._safe_float(r.get("tax_amount")) for r in recs)
-        total_all = sum(self._safe_float(r.get("total"))      for r in recs)
+        total_amt = sum(safe_float(r.get("amount"))     for r in recs)
+        total_tax = sum(safe_float(r.get("tax_amount")) for r in recs)
+        total_all = sum(safe_float(r.get("total"))      for r in recs)
         self.lbl_count._value_label.setText(f"{count} 张")
         self.lbl_total_amt._value_label.setText(f"¥ {total_amt:,.2f}")
         self.lbl_total_tax._value_label.setText(f"¥ {total_tax:,.2f}")
@@ -1367,6 +1497,7 @@ class InvoiceApp(QMainWindow):
         recent = self.records[-batch_count:] if batch_count > 0 else []
         ok = sum(1 for r in recent if not r.get("error"))
         fail = batch_count - ok
+        log.info("批量导入完成: 成功 %d, 失败 %d, 错误 %d", ok, fail, len(self._parse_errors))
         msg = f"导入完成：本次 {batch_count} 张，成功识别 {ok} 张"
         if fail:
             msg += f"，{fail} 张解析异常（查看备注列）"
@@ -1380,6 +1511,7 @@ class InvoiceApp(QMainWindow):
         if not export_records:
             QMessageBox.information(self, "提示", "暂无数据，请先导入发票")
             return
+        log.info("开始导出 Excel: %d 条记录", len(export_records))
 
         month_hint = ""
         if self._filter_year or self._filter_month:
@@ -1395,7 +1527,7 @@ class InvoiceApp(QMainWindow):
             return
 
         # 导出列：不含「付款截图」和「合同」
-        xl_columns = [c for c in COLUMNS if c not in ("付款截图", "合同")]
+        xl_columns = [c for c in COLUMNS if c not in ("付款截图", "合同", "操作")]
 
         try:
             wb = openpyxl.Workbook()
@@ -1422,8 +1554,6 @@ class InvoiceApp(QMainWindow):
 
             for i, rec in enumerate(export_records, 2):
                 row_data = [
-                    i - 1,
-                    rec.get("file", ""),
                     rec.get("invoice_type", ""),
                     rec.get("buyer_name", ""),
                     rec.get("buyer_tax_id", ""),
@@ -1443,19 +1573,19 @@ class InvoiceApp(QMainWindow):
                     if fill:
                         cell.fill = fill
                     cell.border    = border
-                    cell.alignment = center_align if j in [0, 6, 7, 8, 9] else normal_align
+                    cell.alignment = center_align if j in [4, 5, 6, 7] else normal_align
                 ws.row_dimensions[i].height = 20
 
             # 汇总行
             ws.append([])
             sum_row   = ws.max_row + 1
-            total_amt = sum(self._safe_float(r.get("amount"))     for r in export_records)
-            total_tax = sum(self._safe_float(r.get("tax_amount")) for r in export_records)
-            total_all = sum(self._safe_float(r.get("total"))      for r in export_records)
+            total_amt = sum(safe_float(r.get("amount"))     for r in export_records)
+            total_tax = sum(safe_float(r.get("tax_amount")) for r in export_records)
+            total_all = sum(safe_float(r.get("total"))      for r in export_records)
             ws.cell(sum_row, 1, "合计")
-            ws.cell(sum_row, 7, round(total_amt, 2))
-            ws.cell(sum_row, 9, round(total_tax, 2))
-            ws.cell(sum_row, 10, round(total_all, 2))
+            ws.cell(sum_row, 5, round(total_amt, 2))
+            ws.cell(sum_row, 7, round(total_tax, 2))
+            ws.cell(sum_row, 8, round(total_all, 2))
             sum_font = Font(bold=True, color="1E6FBF", size=12)
             sum_fill = PatternFill("solid", fgColor="D6E4F5")
             for cell in ws[sum_row]:
@@ -1465,28 +1595,22 @@ class InvoiceApp(QMainWindow):
                 cell.alignment = center_align
             ws.row_dimensions[sum_row].height = 24
 
-            # 列宽：序号, 发票PDF, 发票类型, 购买方名称, 税号, 销售方名称, 金额, 税率, 税额, 合计, 发票号, 日期, 企业号, 备注
-            xl_widths = [6, 26, 16, 20, 22, 20, 12, 8, 12, 14, 20, 14, 15, 14]
+            # 列宽：发票类型, 购买方名称, 税号, 销售方名称, 金额, 税率, 税额, 合计, 发票号, 日期, 企业号, 备注
+            xl_widths = [16, 20, 22, 20, 12, 8, 12, 14, 20, 14, 15, 14]
             for i, w in enumerate(xl_widths, 1):
                 ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
             ws.freeze_panes = "A2"
             wb.save(save_path)
+            log.info("Excel 导出成功: %s (%d 条)", save_path, len(export_records))
             QMessageBox.information(self, "导出成功",
                 f"已成功导出 {len(export_records)} 条记录\n\n路径：{save_path}")
             self.status.showMessage(f"Excel 已保存：{save_path}")
-            os.startfile(os.path.dirname(save_path))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(save_path)))
 
         except Exception as e:
+            log.error("Excel 导出失败: %s", e, exc_info=True)
             QMessageBox.critical(self, "导出失败", f"导出时出错：\n{e}")
-
-    @staticmethod
-    def _safe_float(val):
-        try:
-            return float(val or 0)
-        except (ValueError, TypeError):
-            return 0.0
-
 
 # ─────────────────────────────────────────────
 #  入口
@@ -1500,12 +1624,18 @@ def main():
         QMessageBox.warning(None, "提示", "发票归档工具已在运行中。\n请查看任务栏或系统托盘。")
         sys.exit(0)
 
+    # 先创建 QApplication（日志 setup 内的 Qt 钩子需要它）
     app = QApplication(sys.argv)
     app.setApplicationName("发票归档")
     app.setStyle("Fusion")
     app.setFont(QFont("Microsoft YaHei", 9))
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
+    # 日志初始化
+    def _gui_error(title, msg):
+        QMessageBox(QMessageBox.Critical, title, msg, QMessageBox.Ok, None).exec_()
+    setup_logging(gui_error_callback=_gui_error)
 
     # 应用级图标（任务栏显示）
     from PyQt5.QtGui import QIcon
@@ -1520,7 +1650,9 @@ def main():
 
     win = InvoiceApp()
     win.show()
-    sys.exit(app.exec_())
+    exit_code = app.exec_()
+    shutdown_logging()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":
