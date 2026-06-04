@@ -47,7 +47,7 @@ COLUMNS = ["发票类型", "购买方名称", "纳税人识别号",
            "销售方名称", "金额(元)", "征收率", "税额(元)", "价税合计(元)",
            "发票号码", "开票日期", "附件", "备注"]
 TABLE_ROW_HEIGHT = 36
-FREEZE_COL_WIDTH = 96  # 冻结操作列宽度
+FREEZE_COL_WIDTH = 110  # 冻结操作列宽度
 COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
 
 # 支持的文件扩展名
@@ -175,8 +175,9 @@ class InvoiceApp(QMainWindow):
         self.btn_export.setIcon(get_icon('export'))
         self.btn_export.setFixedHeight(36)
         self.btn_export.setStyleSheet(
-            f"background:{ACCENT}; color:white; font-weight:bold; border:none;")
+            f"background:{ACCENT}; color:white; font-weight:bold; border:none; padding:0 12px;")
         self.btn_export.setCursor(Qt.PointingHandCursor)
+        self.btn_export.setFixedWidth(110)
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
@@ -236,9 +237,11 @@ class InvoiceApp(QMainWindow):
         filter_bar.addWidget(self.combo_year)
         filter_bar.addWidget(lbl_m)
         filter_bar.addWidget(self.combo_month)
+        filter_bar.addSpacing(8)
         filter_bar.addWidget(self.btn_advanced_filter)
-        filter_bar.addStretch()
+        filter_bar.addSpacing(8)
         filter_bar.addWidget(self.btn_reset)
+        filter_bar.addStretch()
         filter_bar.addWidget(self.lbl_filter_hint)
         main_layout.addLayout(filter_bar)
 
@@ -342,8 +345,8 @@ class InvoiceApp(QMainWindow):
         # 固定列（像素宽度不变）
         fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 10: 100}
         # 弹性列（最小宽度）
-        stretch_cols = {0: 100, 1: 130, 2: 130, 3: 130,
-                        8: 110, 9: 90, 11: 80}
+        stretch_cols = {0: 110, 1: 160, 2: 190, 3: 150,
+                        8: 150, 9: 100, 11: 80}
         for col, width in fixed_cols.items():
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
@@ -1222,7 +1225,7 @@ class InvoiceApp(QMainWindow):
             return
         freeze.setRowCount(len(shown))
         freeze.horizontalHeader().setFixedHeight(self.table.horizontalHeader().height())
-        btn_style = "font-size:12px; padding:2px 4px; border:none; background:transparent;"
+        btn_style = "font-size:11px; padding:0 4px; border:none; background:transparent;"
 
         for i, rec in enumerate(shown):
             freeze.setRowHeight(i, self.table.rowHeight(i))
