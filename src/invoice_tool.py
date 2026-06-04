@@ -60,6 +60,7 @@ class InvoiceApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.records = []
+        self._duplicate_invoices = []
         self.pending_company = ""
         log.info("InvoiceApp 初始化开始")
         
@@ -968,6 +969,7 @@ class InvoiceApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.status.showMessage(f"正在解析 {len(files)} 个文件...")
         self._parse_errors = []
+        self._duplicate_invoices = []
         self._batch_count_before = len(self.records)
 
         # data_dir 传给 Worker，让文件复制在后台完成
@@ -985,13 +987,12 @@ class InvoiceApp(QMainWindow):
 
     # ── 批量导入专用槽（纯内存操作，不碰 UI）────────────────
     def _add_record_batch(self, data: dict):
-        """后台每解析完一条调此槽；只写 self.records，UI 留给 _parse_done 统一渲染。"""
+        """后台每解析完一条调此槽；重复检测 + 写入"""
         inv = Invoice.from_dict(data)
-        # 重复发票号检测：跳过已存在的记录
+        # 重复发票号检测：收集重复记录供结果摘要展示
         if inv.invoice_no and self._find_record_index(inv.invoice_no) is not None:
+            self._duplicate_invoices.append(inv)
             return
-        if self.pending_company:
-            inv.company = self.pending_company
         self._init_record_fields(inv)
         self.records.append(inv)
 
@@ -1517,7 +1518,6 @@ class InvoiceApp(QMainWindow):
         self.lbl_total_all._value_label.setText(f"¥ {total_all:,.2f}")
 
     def _parse_done(self):
-        # 所有记录已在 self.records，一次性重建表格（比逐行 insertRow 快得多）
         self._rebuild_table()
         self._refresh_filter_combos()
         self._save_data()
@@ -1525,16 +1525,38 @@ class InvoiceApp(QMainWindow):
         self.btn_open.setEnabled(True)
         self.progress_bar.setVisible(False)
         batch_count = len(self.records) - getattr(self, '_batch_count_before', 0)
-        recent = self.records[-batch_count:] if batch_count > 0 else []
-        ok = sum(1 for r in recent if not r.get("error"))
-        fail = batch_count - ok
-        log.info("批量导入完成: 成功 %d, 失败 %d, 错误 %d", ok, fail, len(self._parse_errors))
-        msg = f"导入完成：本次 {batch_count} 张，成功识别 {ok} 张"
-        if fail:
-            msg += f"，{fail} 张解析异常（查看备注列）"
-        if self._parse_errors:
-            msg += f"  |  {len(self._parse_errors)} 个错误"
-        self.status.showMessage(msg)
+        fail_count = len(getattr(self, '_parse_errors', []))
+        dup_count = len(getattr(self, '_duplicate_invoices', []))
+        ok_count = max(0, batch_count - fail_count)
+
+        # 结果摘要弹窗（有失败或重复时才弹出）
+        if fail_count > 0 or dup_count > 0:
+            msg_parts = []
+            if ok_count > 0:
+                msg_parts.append(f"成功导入 {ok_count} 张")
+            if fail_count > 0:
+                msg_parts.append(f"解析失败 {fail_count} 张")
+            if dup_count > 0:
+                msg_parts.append(f"重复跳过 {dup_count} 张")
+
+            detail = "\n\n"
+            if fail_count > 0:
+                detail += "解析失败：\n" + "\n".join(f"  · {e}" for e in self._parse_errors)
+            if dup_count > 0:
+                dup_nos = [inv.invoice_no for inv in self._duplicate_invoices]
+                detail += "\n重复发票号：\n" + "\n".join(f"  · {n}" for n in dup_nos)
+
+            QMessageBox.information(
+                self, "导入结果",
+                "\n".join(msg_parts) + detail
+            )
+
+        status_msg = " | ".join(msg_parts) if (fail_count > 0 or dup_count > 0) else f"导入完成：{ok_count} 张"
+        self.status.showMessage(status_msg)
+
+        # 清理临时状态
+        self._parse_errors = []
+        self._duplicate_invoices = []
 
     # ── 导出 Excel ───────────────────────────────
     def export_excel(self):
