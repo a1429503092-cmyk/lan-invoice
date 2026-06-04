@@ -25,13 +25,16 @@ RED       = "#DC2626"
 GREEN     = "#16A34A"
 ACCENT_BORDER = "#C5D4E8"   # 浅蓝底边框
 
-# 暗色主题（图片查看器）
-DARK_BG      = "#1E1E1E"
-DARK_SURFACE = "#2B2B2B"
-DARK_BORDER  = "#555555"
-DARK_HOVER   = "#444444"
-DARK_HOVER_BORDER = "#777777"
-DARK_TEXT    = "#EEEEEE"
+# 暗色主题（沉浸式预览窗口：PDF 查看器、图片查看器）
+DARK_BG            = "#1E1E1E"
+DARK_SURFACE       = "#2B2B2B"
+DARK_SURFACE_ALT   = "#353535"
+DARK_BORDER        = "#444444"
+DARK_HOVER         = "#3A3A3A"
+DARK_HOVER_BORDER  = "#666666"
+DARK_TEXT          = "#E0E0E0"
+DARK_TEXT_DIM      = "#666666"
+DARK_RED           = "#EF4444"
 
 # ── 字体 ──────────────────────────────────────
 
@@ -108,7 +111,7 @@ QComboBox QAbstractItemView {{
 TABLE_QSS = f"""
 QTableWidget {{
     font-size: {FS};
-    gridline-color: {BORDER_LIGHT};
+    gridline-color: transparent;
     background: {WHITE};
     border: 1px solid {BORDER};
 }}
@@ -131,6 +134,10 @@ QTableWidget::item:alternate {{
 QTableWidget::item:selected {{
     background: {ACCENT_LIGHT};
     color: {TEXT};
+}}
+QTableWidget::item:focus {{
+    outline: none;
+    border: none;
 }}
 QTableWidget::item:hover:!selected {{
     background: {BG_HOVER};
@@ -164,8 +171,18 @@ QDialog {{
 DIALOG_QSS_DARK = f"""
 QDialog {{ background: {DARK_BG}; }}
 QPushButton {{
-    border: 1px solid {DARK_BORDER}; padding: 4px 14px;
-    background: {DARK_SURFACE}; color: {DARK_TEXT}; font-size: 13px;
+    border: 1px solid {DARK_BORDER}; padding: 5px 14px;
+    background: {DARK_SURFACE}; color: {DARK_TEXT};
+    font-size: 13px; font-family: "{FONT}";
 }}
-QPushButton:hover {{ background: {DARK_HOVER}; border-color: {DARK_HOVER_BORDER}; }}
+QPushButton:hover {{
+    background: {DARK_HOVER}; border-color: {DARK_HOVER_BORDER};
+}}
+QPushButton:pressed {{
+    background: {DARK_SURFACE_ALT};
+}}
+QPushButton:disabled {{
+    background: {DARK_SURFACE}; color: {DARK_TEXT_DIM};
+    border-color: {DARK_BORDER};
+}}
 """
