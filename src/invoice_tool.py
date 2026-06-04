@@ -36,8 +36,8 @@ from utils import safe_float
 from services.invoice_service import InvoiceService
 from ui.icons import get as get_icon
 from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
-                       ACCENT, ACCENT_BORDER, RED, GREEN, TEXT, TEXT_SEC, TEXT_DIM,
-                       BORDER_LIGHT, MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
+                       ACCENT, ACCENT_BORDER, RED, GREEN, WHITE, TEXT, TEXT_SEC, TEXT_DIM,
+                       BORDER, BORDER_LIGHT, MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
 from version import APP_VERSION
 from logger import setup_logging, shutdown_logging, getLogger
 log = getLogger(__name__)
