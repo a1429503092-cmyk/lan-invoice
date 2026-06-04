@@ -45,7 +45,7 @@ log = getLogger(__name__)
 # 表格列定义
 COLUMNS = ["发票类型", "购买方名称", "纳税人识别号",
            "销售方名称", "金额(元)", "征收率", "税额(元)", "价税合计(元)",
-           "发票号码", "开票日期", "企业号", "付款截图", "合同", "备注"]
+           "发票号码", "开票日期", "企业号", "附件", "备注"]
 TABLE_ROW_HEIGHT = 36
 FREEZE_COL_WIDTH = 96  # 冻结操作列宽度
 COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
@@ -347,10 +347,10 @@ class InvoiceApp(QMainWindow):
 
         header = self.table.horizontalHeader()
         # 固定列（像素宽度不变）
-        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 11: 90, 12: 90}
+        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 11: 100}
         # 弹性列（最小宽度）
         stretch_cols = {0: 100, 1: 130, 2: 130, 3: 130,
-                        8: 110, 9: 90, 10: 90, 13: 80}
+                        8: 110, 9: 90, 10: 90, 12: 80}
         for col, width in fixed_cols.items():
             header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
@@ -432,7 +432,7 @@ class InvoiceApp(QMainWindow):
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage(
-            "就绪 — 拖拽 PDF 导入发票 | 选中行后拖拽图片添加截图 | 选中行后拖拽合同文件添加合同 | Ctrl+V 粘贴截图/合同")
+            "就绪 — 拖拽 PDF 导入发票 | 选中行后拖拽图片/文档添加附件 | Ctrl+V 粘贴附件")
 
         self._set_global_style()
         self._save_locked = False
@@ -744,7 +744,7 @@ class InvoiceApp(QMainWindow):
                 # Ctrl+V 粘贴截图或合同
                 rows = sorted(set(item.row() for item in self.table.selectedItems()))
                 if not rows:
-                    self.status.showMessage("请先选中一行，再按 Ctrl+V 粘贴截图或合同")
+                    self.status.showMessage("请先选中一行，再按 Ctrl+V 粘贴附件")
                     return
                 self._paste_from_clipboard(rows[0])
                 return
@@ -798,7 +798,6 @@ class InvoiceApp(QMainWindow):
                 QMessageBox.information(
                     self, "提示",
                     "请先选中一行，再将图片/文档拖入作为附件添加。\n"
-                    "PDF 文件将始终作为发票导入。"
                 )
             else:
                 self._add_attachments_from_paths(rows[0], other_files)
@@ -845,7 +844,7 @@ class InvoiceApp(QMainWindow):
                 total  = rec.get("total", "") or "—"
                 self.status.showMessage(
                     f"第 {row + 1} 行 | {seller} | {date} | 价税合计：¥{total}"
-                    "  ·  Ctrl+V 粘贴截图/合同"
+                    "  ·  Ctrl+V 粘贴附件"
                 )
         except Exception:
             pass
@@ -1054,8 +1053,7 @@ class InvoiceApp(QMainWindow):
         self.table.setItem(row, COL_IDX["开票日期"],      cell(data.get("invoice_date", ""), bg=row_bg))
         self.table.setItem(row, COL_IDX["企业号"],        cell(data.get("company", ""), editable=True, bg=row_bg))
 
-        self._set_screenshot_cell(row, data)
-        self._set_contract_cell(row, data)
+        self._set_attachment_cell(row, data)
 
         remark_val  = data.get("remark", "") or data.get("error", "") or "✓"
         remark_item = cell(remark_val, editable=True,
@@ -1212,6 +1210,41 @@ class InvoiceApp(QMainWindow):
         lay.addStretch()
         self.table.setCellWidget(row, COL_IDX["合同"], w)
 
+    # ── 附件单元格（统一截图+合同）─────────────────
+    def _set_attachment_cell(self, row, data):
+        attachments = data.get("attachments", [])
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
+
+        if attachments:
+            lbl = QLabel(f"[{len(attachments)}]")
+            lbl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:bold;")
+            btn_v = QPushButton("查看")
+            btn_v.setFixedHeight(24)
+            btn_v.setFixedWidth(40)
+            btn_v.setStyleSheet(
+                f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
+            btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
+            lay.addWidget(lbl)
+            lay.addWidget(btn_v)
+        else:
+            lbl = QLabel("—")
+            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
+            lay.addWidget(lbl)
+
+        btn_add = QPushButton("＋")
+        btn_add.setFixedHeight(24)
+        btn_add.setFixedWidth(26)
+        btn_add.setToolTip("添加附件")
+        btn_add.setStyleSheet(
+            f"font-size:13px; padding:0; color:{ACCENT}; border:none; background:transparent;")
+        btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
+        lay.addWidget(btn_add)
+        lay.addStretch()
+        self.table.setCellWidget(row, COL_IDX["附件"], w)
+
     # ── 截图操作 ─────────────────────────────────
     def _get_record_by_row(self, row):
         inv_no_item = self.table.item(row, COL_IDX["发票号码"])
@@ -1294,8 +1327,7 @@ class InvoiceApp(QMainWindow):
                                           self._attachment_dir,
                                           InvoiceService._attachment_namer)
         if added > 0:
-            # Fallback: use _set_screenshot_cell until _set_attachment_cell is added
-            self._set_screenshot_cell(row, rec)
+            self._set_attachment_cell(row, rec)
             self._save_data()
             self.status.showMessage(f"已添加 {added} 个附件")
 
@@ -1320,6 +1352,34 @@ class InvoiceApp(QMainWindow):
             self._set_contract_cell(row, rec)
             self._save_data()
 
+    # ── 统一附件操作 ─────────────────────────────
+    def _add_attachment(self, row):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "选择附件文件", "",
+            "附件文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.pdf *.docx *.doc *.xlsx *.xls);;所有文件 (*)"
+        )
+        if files:
+            self._add_attachments_from_paths(row, files)
+
+    def _view_attachments(self, row):
+        rec = self._get_record_by_row(row)
+        if rec is None:
+            return
+        atts = rec.get("attachments", [])
+        if not atts:
+            QMessageBox.information(self, "提示", "该发票暂无附件")
+            return
+        from ui.dialogs.attachment_viewer import AttachmentViewerDialog
+        dlg = AttachmentViewerDialog(
+            atts, rec_name=rec.get("buyer_name", "") or rec.get("file", ""),
+            parent=self
+        )
+        dlg.exec_()
+        if dlg.attachment_paths != atts:
+            rec["attachments"] = dlg.attachment_paths
+            self._set_attachment_cell(row, rec)
+            self._save_data()
+
     # ── 剪贴板粘贴 ──────────────────────────────
     def _paste_from_clipboard(self, row):
         """Ctrl+V：图片数据→截图，文件路径→按扩展名分类"""
@@ -1340,7 +1400,7 @@ class InvoiceApp(QMainWindow):
                 try:
                     img.save(dst, "PNG")
                     rec.setdefault("attachments", []).append(dst)
-                    self._set_screenshot_cell(row, rec)
+                    self._set_attachment_cell(row, rec)
                     self._save_data()
                     self.status.showMessage("已从剪贴板粘贴图片并添加为附件")
                 except Exception as ex:
@@ -1381,18 +1441,10 @@ class InvoiceApp(QMainWindow):
     def _show_context_menu(self, pos):
         menu = QMenu(self)
 
-        # 截图区
-        menu.addAction(get_icon('camera'), "添加付款截图（文件选择）", self._ctx_add_screenshot)
-        menu.addAction(get_icon('clipboard'), "粘贴截图（Ctrl+V）", self._ctx_paste_screenshot)
-        menu.addAction(get_icon('search'), "查看付款截图", self._ctx_view_screenshot)
-        menu.addAction(get_icon('delete'), "清除此行截图", self._ctx_delete_screenshots)
-        menu.addSeparator()
-
-        # 合同区
-        menu.addAction(get_icon('document'), "添加合同（文件选择）", self._ctx_add_contract)
-        menu.addAction(get_icon('clipboard'), "粘贴合同文件（Ctrl+V）", self._ctx_paste_contract)
-        menu.addAction(get_icon('folder'), "查看/管理合同", self._ctx_view_contracts)
-        menu.addAction(get_icon('delete'), "清除此行合同", self._ctx_delete_contracts)
+        menu.addAction(get_icon('camera'), "添加附件", self._ctx_add_attachment)
+        menu.addAction(get_icon('clipboard'), "粘贴附件（Ctrl+V）", self._ctx_paste_attachment)
+        menu.addAction(get_icon('search'), "查看附件", self._ctx_view_attachments)
+        menu.addAction(get_icon('delete'), "清除附件", self._ctx_delete_attachments)
         menu.addSeparator()
 
         menu.addAction(get_icon('delete'), "删除选中行", self._delete_selected_rows)
@@ -1446,6 +1498,29 @@ class InvoiceApp(QMainWindow):
                 self._set_contract_cell(row, rec)
         self._save_data()
         self.status.showMessage("已清除选中行的合同记录")
+
+    def _ctx_add_attachment(self):
+        for row in self._selected_rows():
+            self._add_attachment(row)
+
+    def _ctx_paste_attachment(self):
+        rows = self._selected_rows()
+        if rows:
+            self._paste_from_clipboard(rows[0])
+
+    def _ctx_view_attachments(self):
+        rows = self._selected_rows()
+        if rows:
+            self._view_attachments(rows[0])
+
+    def _ctx_delete_attachments(self):
+        for row in self._selected_rows():
+            rec = self._get_record_by_row(row)
+            if rec:
+                rec["attachments"] = []
+                self._set_attachment_cell(row, rec)
+        self._save_data()
+        self.status.showMessage("已清除选中行的附件记录")
 
     def _delete_selected_rows(self):
         rows = sorted(set(item.row() for item in self.table.selectedItems()), reverse=True)
@@ -1579,8 +1654,8 @@ class InvoiceApp(QMainWindow):
         if not save_path:
             return
 
-        # 导出列：不含「付款截图」和「合同」
-        xl_columns = [c for c in COLUMNS if c not in ("付款截图", "合同", "操作")]
+        # 导出列：不含「附件」和「操作」
+        xl_columns = [c for c in COLUMNS if c not in ("附件", "操作")]
 
         try:
             wb = openpyxl.Workbook()
