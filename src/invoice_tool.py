@@ -502,6 +502,8 @@ class InvoiceApp(QMainWindow):
         return w
 
     def _resize_stretch_cols(self):
+        if not self._stretch_cols or self._stretch_total_weight == 0:
+            return
         available = self.table.viewport().width()
         free = available - self._stretch_fixed_total
         if free <= 0:
@@ -718,21 +720,11 @@ class InvoiceApp(QMainWindow):
                 header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
                 self.table.setColumnWidth(col_idx, 90)
 
-        # Update stretch recalculation data
+        # Disable auto-stretch — keep user-resized widths stable
         self._stretch_cols = {}
         self._stretch_factors = {}
-        self._stretch_fixed_total = sum(fixed_widths.values())
-        for col_name, width in stretch_widths.items():
-            col_idx = self._current_col_idx.get(col_name, -1)
-            if col_idx >= 0:
-                self._stretch_cols[col_idx] = width
-                self._stretch_factors[col_idx] = width // 10
-        for tag_name in self._tag_templates:
-            col_idx = self._current_col_idx.get(tag_name, -1)
-            if col_idx >= 0:
-                self._stretch_cols[col_idx] = 90
-                self._stretch_factors[col_idx] = 9
-        self._stretch_total_weight = sum(self._stretch_factors.values())
+        self._stretch_total_weight = 0
+        self._stretch_fixed_total = 0
 
         shown = [r for r in self.records if self._record_matches_filter(r)]
         # Apply sort if any
