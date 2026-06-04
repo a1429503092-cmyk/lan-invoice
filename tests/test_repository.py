@@ -109,5 +109,84 @@ class TestInvoiceRepository(unittest.TestCase):
         self.assertEqual(self.repo.data_file, self.data_file)
 
 
+class TestDataMigration(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.data_file = os.path.join(self.tmp, "test_data.json")
+        self.repo = InvoiceRepository(self.data_file)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_old_format(self, records: list[dict]):
+        with open(self.data_file, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False)
+
+    def test_migrate_company_to_tags(self):
+        """company 字段迁移到 tags["企业号"]"""
+        self._write_old_format([{
+            "file": "test.pdf", "invoice_no": "12345",
+            "company": "14786", "screenshots": [], "contracts": [],
+        }])
+        invoices = self.repo.load()
+        self.assertEqual(invoices[0].tags.get("企业号"), "14786")
+
+    def test_migrate_screenshots_and_contracts_to_attachments(self):
+        """screenshots + contracts 合并到 attachments"""
+        self._write_old_format([{
+            "file": "test.pdf", "invoice_no": "12345",
+            "company": "", "screenshots": ["/old/ss/1.png"], "contracts": ["/old/ct/1.pdf"],
+        }])
+        invoices = self.repo.load()
+        self.assertIn("/old/ss/1.png", invoices[0].attachments)
+        self.assertIn("/old/ct/1.pdf", invoices[0].attachments)
+
+    def test_migrate_does_not_duplicate(self):
+        """已有新格式数据的不重复迁移"""
+        self._write_old_format([{
+            "file": "test.pdf", "invoice_no": "12345",
+            "company": "14786", "screenshots": ["/old/ss/1.png"], "contracts": [],
+            "tags": {"企业号": "99999"}, "attachments": ["/new/att/1.png"],
+        }])
+        invoices = self.repo.load()
+        self.assertEqual(invoices[0].tags.get("企业号"), "99999")
+        self.assertEqual(invoices[0].attachments, ["/new/att/1.png"])
+
+    def test_migrate_empty_old_data(self):
+        """空旧数据正常迁移"""
+        self._write_old_format([{
+            "file": "test.pdf", "invoice_no": "12345",
+            "company": "", "screenshots": [], "contracts": [],
+        }])
+        invoices = self.repo.load()
+        self.assertEqual(invoices[0].tags, {})
+        self.assertEqual(invoices[0].attachments, [])
+
+    def test_new_format_passes_through(self):
+        """新格式数据不受影响"""
+        with open(self.data_file, "w", encoding="utf-8") as f:
+            json.dump([{
+                "file": "test.pdf", "invoice_no": "12345",
+                "company": "", "screenshots": [], "contracts": [],
+                "tags": {"企业号": "A001", "项目名称": "Q1"},
+                "attachments": ["/att/a.png"],
+            }], f, ensure_ascii=False)
+        invoices = self.repo.load()
+        self.assertEqual(invoices[0].tags, {"企业号": "A001", "项目名称": "Q1"})
+        self.assertEqual(invoices[0].attachments, ["/att/a.png"])
+
+    def test_migration_saves_to_disk(self):
+        """迁移后自动保存为新格式"""
+        self._write_old_format([{
+            "file": "test.pdf", "invoice_no": "12345",
+            "company": "14786", "screenshots": ["/ss.png"], "contracts": [],
+        }])
+        self.repo.load()
+        # 重新加载验证迁移已写入磁盘
+        invoices = self.repo.load()
+        self.assertEqual(invoices[0].tags.get("企业号"), "14786")
+        self.assertIn("/ss.png", invoices[0].attachments)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
