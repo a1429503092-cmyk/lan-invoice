@@ -342,30 +342,18 @@ class InvoiceApp(QMainWindow):
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         header = self.table.horizontalHeader()
-        # 全部列设固定宽度（保证数据完整显示），仅允许用户拖动微调
+        # 按官方规范：Fixed 固定列，Stretch 弹性列
         fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 10: 100}
-        # 文本/数据列：足够宽以容纳典型数据
-        text_cols = {0: 110, 1: 180, 2: 200, 3: 170,
-                     8: 170, 9: 110, 11: 100}
-        for col, width in {**fixed_cols, **text_cols}.items():
-            header.setSectionResizeMode(col, QHeaderView.Interactive)
+        stretch_cols = {0: 110, 1: 180, 2: 200, 3: 170,
+                        8: 170, 9: 110, 11: 100}
+        for col, width in fixed_cols.items():
+            header.setSectionResizeMode(col, QHeaderView.Fixed)
             self.table.setColumnWidth(col, width)
-        # 关闭 stretch 逻辑（用户拖动列宽后不应被覆盖）
-        self._stretch_cols = {}
-        self._stretch_factors = {}
-        self._stretch_total_weight = 0
-        self._stretch_fixed_total = 0
+        for col, width in stretch_cols.items():
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+            self.table.setColumnWidth(col, width)
 
-        self._resize_timer = QTimer(self.table)
-        self._resize_timer.setSingleShot(True)
-        self._resize_timer.timeout.connect(self._resize_stretch_cols)
-
-        self._table_resize_orig = self.table.resizeEvent
-        def _on_table_resize(event):
-            self._table_resize_orig(event)
-            self._resize_timer.start(80)
-        self.table.resizeEvent = _on_table_resize
-
+        # QHeaderView.Stretch 模式自动管理列宽，无需手动计时器
         self.table.setStyleSheet(TABLE_QSS)
 
         header.setSortIndicatorShown(True)
@@ -703,21 +691,26 @@ class InvoiceApp(QMainWindow):
         # Rebuild COL_IDX
         self._current_col_idx = {c: i for i, c in enumerate(effective_cols)}
 
-        # Set column resize modes for dynamic layout (use names for stable referencing)
+        # Set column resize modes (按官方规范：Fixed 固定列，Stretch 弹性列)
         header = self.table.horizontalHeader()
         fixed_widths = {"金额(元)": 88, "征收率": 55, "税额(元)": 88, "价税合计(元)": 98, "附件": 100}
-        text_widths = {"发票类型": 110, "购买方名称": 180, "纳税人识别号": 200,
-                       "销售方名称": 170, "发票号码": 170, "开票日期": 110, "备注": 100}
-        for col_name, width in {**fixed_widths, **text_widths}.items():
+        stretch_widths = {"发票类型": 110, "购买方名称": 180, "纳税人识别号": 200,
+                          "销售方名称": 170, "发票号码": 170, "开票日期": 110, "备注": 100}
+        for col_name, width in fixed_widths.items():
             col_idx = self._current_col_idx.get(col_name, -1)
             if col_idx >= 0:
-                header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+                header.setSectionResizeMode(col_idx, QHeaderView.Fixed)
                 self.table.setColumnWidth(col_idx, width)
-        # Tag columns — interactive
+        for col_name, width in stretch_widths.items():
+            col_idx = self._current_col_idx.get(col_name, -1)
+            if col_idx >= 0:
+                header.setSectionResizeMode(col_idx, QHeaderView.Stretch)
+                self.table.setColumnWidth(col_idx, width)
+        # Tag columns — stretch
         for tag_name in self._tag_templates:
             col_idx = self._current_col_idx.get(tag_name, -1)
             if col_idx >= 0:
-                header.setSectionResizeMode(col_idx, QHeaderView.Interactive)
+                header.setSectionResizeMode(col_idx, QHeaderView.Stretch)
                 self.table.setColumnWidth(col_idx, 90)
 
         # Disable auto-stretch — keep user-resized widths stable
