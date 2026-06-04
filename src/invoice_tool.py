@@ -339,7 +339,7 @@ class InvoiceApp(QMainWindow):
 
         header = self.table.horizontalHeader()
         # 固定列（像素宽度不变）
-        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 10: 130}
+        fixed_cols = {4: 88, 5: 55, 6: 88, 7: 98, 10: 100}
         # 弹性列（最小宽度）
         stretch_cols = {0: 100, 1: 130, 2: 130, 3: 130,
                         8: 110, 9: 90, 11: 80}
@@ -1359,13 +1359,12 @@ class InvoiceApp(QMainWindow):
             lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
             lay.addWidget(lbl)
 
-        btn_add = QPushButton("＋ 添加")
-        btn_add.setFixedHeight(26)
-        btn_add.setFixedWidth(58)
+        btn_add = QPushButton("＋")
+        btn_add.setFixedSize(24, 24)
         btn_add.setToolTip("拖拽或选择附件文件")
         btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.setStyleSheet(
-            f"font-size:12px; padding:0 6px; color:white; background:{ACCENT};"
+            f"font-size:14px; color:white; background:{ACCENT};"
             f"border:none; border-radius:3px; font-weight:bold;"
         )
         btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
