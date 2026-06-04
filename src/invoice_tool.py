@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QProgressBar, QAbstractItemView, QDialog,
     QComboBox, QMenu, QInputDialog, QSizePolicy
 )
+from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont
 
@@ -1348,33 +1349,52 @@ class InvoiceApp(QMainWindow):
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(4)
+        lay.setSpacing(3)
+
+        # 统一的图标按钮风格：圆角矩形+主题色边框+hover高亮
+        btn_style = (
+            "QPushButton {{"
+            "  border:1px solid {border}; background:{bg}; color:{fg};"
+            "  border-radius:3px; font-size:12px; font-weight:bold;"
+            "  padding:0;"
+            "}}"
+            "QPushButton:hover {{ background:{hover}; border-color:{accent}; }}"
+        )
 
         if attachments:
-            btn_v = QPushButton(str(len(attachments)))
+            btn_v = QPushButton()
             btn_v.setIcon(get_icon('paperclip'))
-            btn_v.setFixedHeight(24)
+            btn_v.setIconSize(QtCore.QSize(14, 14))
+            btn_v.setText(f"  {len(attachments)}")
+            btn_v.setFixedHeight(22)
             btn_v.setCursor(Qt.PointingHandCursor)
             btn_v.setToolTip(f"共 {len(attachments)} 个附件，点击查看")
-            btn_v.setStyleSheet(
-                f"font-size:13px; font-weight:bold; padding:0 6px; "
-                f"color:{ACCENT}; border:none; background:transparent;"
-            )
+            btn_v.setStyleSheet(btn_style.format(
+                border=BORDER, bg=WHITE, fg=TEXT, hover=ACCENT_LIGHT, accent=ACCENT
+            ))
             btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
             lay.addWidget(btn_v)
         else:
-            lbl = QLabel("—")
-            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
-            lay.addWidget(lbl)
+            btn_v = QPushButton()
+            btn_v.setIcon(get_icon('paperclip'))
+            btn_v.setIconSize(QtCore.QSize(14, 14))
+            btn_v.setFixedSize(22, 22)
+            btn_v.setCursor(Qt.PointingHandCursor)
+            btn_v.setToolTip("暂无附件")
+            btn_v.setStyleSheet(btn_style.format(
+                border=BORDER_LIGHT, bg="transparent", fg=TEXT_DIM,
+                hover=ACCENT_LIGHT, accent=ACCENT
+            ))
+            btn_v.setEnabled(False)
+            lay.addWidget(btn_v)
 
-        btn_add = QPushButton("＋")
-        btn_add.setFixedSize(24, 24)
-        btn_add.setToolTip("拖拽或选择附件文件")
+        btn_add = QPushButton("+")
+        btn_add.setFixedSize(22, 22)
+        btn_add.setToolTip("添加附件（支持拖拽）")
         btn_add.setCursor(Qt.PointingHandCursor)
-        btn_add.setStyleSheet(
-            f"font-size:14px; color:white; background:{GREEN};"
-            f"border:none; border-radius:3px; font-weight:bold;"
-        )
+        btn_add.setStyleSheet(btn_style.format(
+            border=BORDER, bg=WHITE, fg=ACCENT, hover=ACCENT_LIGHT, accent=ACCENT
+        ))
         btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
         lay.addWidget(btn_add)
         lay.addStretch()
