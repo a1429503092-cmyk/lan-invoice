@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
-from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont
+from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QFontDatabase
 
 from dialogs import (ImageViewerDialog, ContractManagerDialog,
                      SettingsDialog, DeleteConfirmDialog)
