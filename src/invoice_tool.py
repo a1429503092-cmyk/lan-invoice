@@ -2018,20 +2018,29 @@ def main():
     app.setStyle("Fusion")
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-    # 加载系统所有字体到 Qt，避免 PyQt5 自带字体目录不全
-    QFontDatabase.addApplicationFont("")
-    # 选择实际可用的中文字体（按优先级回退）
+
+    # PyQt5 默认不加载系统字体到 Qt 的字体数据库
+    # 主动扫描 Windows 系统字体目录并加载
+    if sys.platform == "win32":
+        windir = os.environ.get("WINDIR", "C:\\Windows")
+        fonts_dir = os.path.join(windir, "Fonts")
+        if os.path.isdir(fonts_dir):
+            for f in os.listdir(fonts_dir):
+                if f.lower().endswith((".ttf", ".otf", ".ttc")):
+                    try:
+                        QFontDatabase.addApplicationFont(os.path.join(fonts_dir, f))
+                    except Exception:
+                        pass
+
+    # 选择实际可用的中文字体
     available_fonts = set(QFontDatabase().families())
     preferred = ["Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", "SimHei", "Arial"]
     chosen = next((f for f in preferred if f in available_fonts), "Arial")
     base_font = QFont(chosen, 10)
     base_font.setWeight(QFont.Medium)
-    base_font.setStyleHint(QFont.SansSerif)
-    base_font.setStyleStrategy(QFont.PreferAntialias)
     app.setFont(base_font)
-    log.info("字体：%s | 重量：%d", chosen, base_font.weight())
-    app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    log.info("字体：%s | 重量：%d | 大小：%d | 可用字体数：%d",
+             chosen, base_font.weight(), base_font.pointSize(), len(available_fonts))
 
     # 日志初始化
     def _gui_error(title, msg):
