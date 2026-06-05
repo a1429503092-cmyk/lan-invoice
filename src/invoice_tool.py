@@ -2016,7 +2016,15 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("发票归档")
     app.setStyle("Fusion")
-    app.setFont(QFont("Microsoft YaHei", 9))
+    # 选择实际可用的中文字体（按优先级回退）
+    from PyQt5.QtGui import QFontDatabase
+    available_fonts = set(QFontDatabase().families())
+    preferred = ["Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑", "SimHei", "Arial"]
+    chosen = next((f for f in preferred if f in available_fonts), "Arial")
+    base_font = QFont(chosen, 9)
+    base_font.setWeight(QFont.DemiBold)
+    app.setFont(base_font)
+    log.info("字体：%s | 重量：%d", chosen, base_font.weight())
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
