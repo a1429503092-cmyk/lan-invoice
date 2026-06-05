@@ -8,8 +8,11 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QColor, QDesktopServices
+
+from logger import getLogger
+log = getLogger(__name__)
 
 from ui.theme import TEXT, TEXT_SEC, TEXT_DIM, RED, ACCENT_LIGHT, BG_ALT, BORDER
 
@@ -127,7 +130,7 @@ class ContractManagerDialog(QDialog):
             QMessageBox.warning(self, "文件不存在", f"找不到文件：\n{path}")
             return
         try:
-            os.startfile(path)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
         except Exception as e:
             QMessageBox.warning(self, "打开失败", f"无法打开文件：\n{e}")
 

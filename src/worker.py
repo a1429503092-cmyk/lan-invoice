@@ -7,6 +7,9 @@ from PyQt5.QtCore import QThread, pyqtSignal
 
 from invoice_parser import parse_invoice_pdf
 from utils import copy_file_to_dir
+from logger import getLogger, log_thread
+
+log = getLogger(__name__)
 
 
 class ParseWorker(QThread):
@@ -29,16 +32,21 @@ class ParseWorker(QThread):
             return src
         return copy_file_to_dir(src, os.path.join(self.data_dir, "invoices"))
 
+    @log_thread
     def run(self):
         total = len(self.files)
+        log.info("开始批量解析: %d 个文件", total)
         for i, f in enumerate(self.files, 1):
             if self._abort:
+                log.warning("用户中断解析，已处理 %d/%d", i - 1, total)
                 break
             try:
                 data = parse_invoice_pdf(f)
                 data["pdf_path"] = self._copy_pdf(data.get("pdf_path", "") or f)
+                log.debug("[%d/%d] %s 解析成功", i, total, os.path.basename(f))
             except Exception as e:
                 self.error_occurred.emit(f"解析 {os.path.basename(f)} 时出错: {str(e)}")
+                log.warning("[%d/%d] %s 解析异常: %s", i, total, os.path.basename(f), e)
                 data = {
                     "pdf_path": f,
                     "error": str(e),

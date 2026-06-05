@@ -1,25 +1,66 @@
 # -*- coding: utf-8 -*-
-"""PDF 预览对话框"""
+"""PDF 预览对话框 — 图片底层 + 可选文字覆盖层"""
 
 import os
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QScrollArea, QMessageBox, QApplication,
+    QMessageBox, QApplication, QGraphicsView, QGraphicsScene,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage
-
-import pdfplumber
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QEvent, QSize, QUrl
+from PyQt5.QtGui import QPixmap, QImage, QColor, QDesktopServices, QPainter, QFont, QIcon
 
 from ui.theme import DARK_SURFACE, DARK_TEXT, DIALOG_QSS_DARK
+from logger import getLogger
+
+log = getLogger(__name__)
+
+# 文字识别图标 — 20×20 的 "T" 字母 + 选中高亮下划线
+_TEXT_ICON = None
+
+
+def _get_text_icon() -> QIcon:
+    """懒加载生成文字识别图标"""
+    global _TEXT_ICON
+    if _TEXT_ICON is not None:
+        return _TEXT_ICON
+    size = 20
+    pix_on = QPixmap(size, size)
+    pix_on.fill(Qt.transparent)
+    p = QPainter(pix_on)
+    p.setRenderHint(QPainter.Antialiasing)
+    # T 字母
+    f = QFont("Microsoft YaHei", 10, QFont.Bold)
+    p.setFont(f)
+    p.setPen(QColor("#D0D8E8"))
+    p.drawText(1, 2, size - 2, size - 4, Qt.AlignCenter, "T")
+    # 选中高亮线
+    p.fillRect(3, size - 5, 14, 2, QColor("#FFEB50"))
+    p.end()
+
+    pix_off = QPixmap(size, size)
+    pix_off.fill(Qt.transparent)
+    p = QPainter(pix_off)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setFont(f)
+    p.setPen(QColor("#5A6070"))
+    p.drawText(1, 2, size - 2, size - 4, Qt.AlignCenter, "T")
+    p.fillRect(3, size - 5, 14, 2, QColor("#5A6070"))
+    p.end()
+
+    icon = QIcon()
+    icon.addPixmap(pix_on, QIcon.Normal, QIcon.On)
+    icon.addPixmap(pix_off, QIcon.Normal, QIcon.Off)
+    _TEXT_ICON = icon
+    return icon
 
 
 class RenderWorker(QThread):
-    """后台渲染 PDF 页面为图片（PyMuPDF），传 QImage 到主线程"""
-    finished = pyqtSignal(QImage, str)  # image, error_message
+    """后台渲染 PDF 页面为图片 + 提取文字块坐标"""
+    finished = pyqtSignal(QImage, list, str)  # image, text_blocks, error
 
-    def __init__(self, pdf_path: str, page_index: int, render_dpi: int = 72):
+    def __init__(self, pdf_path: str, page_index: int, render_dpi: int = 200):
+        # 默认值仅作回退，实际由 PdfViewerDialog._screen_dpi() 决定
         super().__init__()
         self.pdf_path = pdf_path
         self.page_index = page_index
@@ -27,40 +68,72 @@ class RenderWorker(QThread):
 
     def run(self):
         import fitz
-        from PIL import Image as PILImage
         try:
             doc = fitz.open(self.pdf_path)
             page = doc[self.page_index]
             zoom = self.render_dpi / 72.0
             mat = fitz.Matrix(zoom, zoom)
-            # 强制 RGBA 输出，避免 RGB(3ch) vs RGBA(4ch) 不匹配
             pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
-            pil_img = PILImage.frombuffer("RGB", (pix.width, pix.height),
-                                          bytes(pix.samples), "raw", "RGB", 0, 1)
+            samples = bytes(pix.samples)
+
+            # 用 word 级别坐标按行分组，精确匹配文字实际区域
+            text_blocks = []
+            words = page.get_text("words")
+            if words:
+                lines = {}
+                for w in words:
+                    x0, y0, x1, y1, word_text = w[:5]
+                    if not word_text.strip():
+                        continue
+                    block_no = w[5] if len(w) > 5 else 0
+                    line_no = w[6] if len(w) > 6 else 0
+                    key = (block_no, line_no)
+                    if key not in lines:
+                        lines[key] = {"x0": x0, "y0": y0, "x1": x1, "y1": y1,
+                                       "words": []}
+                    entry = lines[key]
+                    entry["x0"] = min(entry["x0"], x0)
+                    entry["y0"] = min(entry["y0"], y0)
+                    entry["x1"] = max(entry["x1"], x1)
+                    entry["y1"] = max(entry["y1"], y1)
+                    entry["words"].append(word_text)
+
+                for entry in lines.values():
+                    text_blocks.append({
+                        "text": " ".join(entry["words"]),
+                        "x": entry["x0"] * zoom,
+                        "y": entry["y0"] * zoom,
+                        "w": max((entry["x1"] - entry["x0"]) * zoom, 10),
+                        "h": max((entry["y1"] - entry["y0"]) * zoom, 10),
+                    })
+
             doc.close()
-            data = pil_img.tobytes("raw", "RGB")
-            qim = QImage(data, pix.width, pix.height, 3 * pix.width,
-                         QImage.Format_RGB888)
-            self.finished.emit(qim, "")
+            qim = QImage(samples, pix.width, pix.height,
+                         pix.width * pix.n, QImage.Format_RGB888).copy()
+            self.finished.emit(qim, text_blocks, "")
         except Exception as e:
-            self.finished.emit(QImage(), str(e))
+            log.error("PDF 渲染失败: %s 第%d页 | %s",
+                      os.path.basename(self.pdf_path), self.page_index, e)
+            self.finished.emit(QImage(), [], str(e))
 
 
 class PdfViewerDialog(QDialog):
-    """PDF 预览对话框，支持翻页、缩放、系统打开。"""
+    """PDF 预览对话框，支持翻页、缩放、文字框选复制、系统打开。"""
 
     def __init__(self, pdf_path: str, parent=None):
         super().__init__(parent)
         self.pdf_path = pdf_path
-        self._pages = []
+        self._page_count = 0
         self._current_page = 0
         self._zoom_mode = "fit_width"
-        self._original_pixmap = None
-        self._pdf = None
         self._load_error = None
-        self._render_dpi = 72  # 72 DPI 屏幕分辨率，快速预览；高清可切换
+        self._render_dpi = self._screen_dpi()
         self._worker = None
         self._rendering = False
+        self._pixmap_item = None
+        self._text_items = []
+        self._text_blocks_data = []
+        self._text_mode = False  # 文字识别默认关闭
 
         self.setWindowTitle(os.path.basename(pdf_path))
         self.resize(900, 700)
@@ -71,13 +144,31 @@ class PdfViewerDialog(QDialog):
         self._update_ui_state()
         self._first_show = True
 
-    # ── 加载 PDF ─────────────────────────────────
+    # ── 加载 PDF（仅获取页数）────────────────────
+
+    @staticmethod
+    def _screen_dpi() -> int:
+        """获取屏幕物理 DPI 作为渲染分辨率，保底 200，封顶 400"""
+        try:
+            from PyQt5.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app and app.primaryScreen():
+                dpi = int(app.primaryScreen().physicalDotsPerInch())
+                return max(200, min(dpi, 400))
+        except Exception:
+            pass
+        return 200
 
     def _load_pdf(self):
+        import fitz
         try:
-            self._pdf = pdfplumber.open(self.pdf_path)
-            self._pages = self._pdf.pages
+            doc = fitz.open(self.pdf_path)
+            self._page_count = len(doc)
+            doc.close()
+            log.info("PDF 已打开: %s | %d 页",
+                     os.path.basename(self.pdf_path), self._page_count)
         except FileNotFoundError:
+            log.warning("PDF 文件不存在: %s", self.pdf_path)
             self._load_error = "文件不存在"
             QMessageBox.warning(self, "错误",
                                 f"PDF 文件不存在：\n{self.pdf_path}")
@@ -90,8 +181,10 @@ class PdfViewerDialog(QDialog):
                     text="", echo=QLineEdit.Password)
                 if ok and pw:
                     try:
-                        self._pdf = pdfplumber.open(self.pdf_path, password=pw)
-                        self._pages = self._pdf.pages
+                        doc = fitz.open(self.pdf_path)
+                        doc.authenticate(pw)
+                        self._page_count = len(doc)
+                        doc.close()
                         return
                     except Exception:
                         self._load_error = "密码错误"
@@ -101,14 +194,15 @@ class PdfViewerDialog(QDialog):
                     QMessageBox.information(self, "需要密码", "请用「系统打开」按钮在外部程序中查看。")
             else:
                 self._load_error = "文件损坏或加密"
+                log.warning("PDF 打开异常: %s | %s", self.pdf_path, e)
                 QMessageBox.warning(self, "错误",
                                     f"无法打开 PDF 文件，文件可能已损坏或加密：\n{self.pdf_path}")
-            self._pages = []
+            self._page_count = 0
 
     # ── 后台渲染 ─────────────────────────────────
 
     def _start_render(self):
-        if self._rendering or not self._pages:
+        if self._rendering or self._page_count == 0:
             return
         self._rendering = True
         self._set_loading(True)
@@ -116,7 +210,7 @@ class PdfViewerDialog(QDialog):
         self._worker.finished.connect(self._on_render_done)
         self._worker.start()
 
-    def _on_render_done(self, qimage: QImage, error: str):
+    def _on_render_done(self, qimage: QImage, text_blocks: list, error: str):
         self._rendering = False
         self._worker = None
         self._set_loading(False)
@@ -127,19 +221,56 @@ class PdfViewerDialog(QDialog):
                                 f"请用「系统打开」查看完整内容。\n\n{error}")
             return
 
-        # 在主线程将 QImage 转为 QPixmap（Qt 要求 QPixmap 在主线程创建）
-        self._original_pixmap = QPixmap.fromImage(qimage)
+        self.scene.clear()
+        self._pixmap_item = None
+        self._text_items = []
+        self._text_blocks_data = text_blocks
+
+        pixmap = QPixmap.fromImage(qimage)
+        self._pixmap_item = self.scene.addPixmap(pixmap)
+        self.scene.setSceneRect(self._pixmap_item.boundingRect())
+
+        if self._text_mode:
+            self._add_text_items()
+
         self._apply_zoom()
 
-    def _set_loading(self, loading: bool):
-        """显示/隐藏加载状态"""
-        if loading:
-            self.img_label.setText(f"正在加载第 {self._current_page + 1} 页…")
-            self.img_label.setStyleSheet(
-                f"color:{DARK_TEXT}; font-size:15px; background:{DARK_SURFACE};"
-            )
+    def _add_text_items(self):
+        """根据缓存的文字块数据创建可选文字叠加层"""
+        for block in self._text_blocks_data:
+            item = self.scene.addText(block["text"])
+            item.setPos(block["x"], block["y"])
+            item.setTextWidth(block["w"])
+            item.setDefaultTextColor(QColor(0, 0, 0, 0))
+            item.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            item.setCursor(Qt.IBeamCursor)
+            font = QFont("Microsoft YaHei")
+            font.setPixelSize(max(int(block["h"] * 0.7), 9))
+            item.setFont(font)
+            self._text_items.append(item)
+
+    def _remove_text_items(self):
+        """移除所有文字叠加层"""
+        for item in self._text_items:
+            self.scene.removeItem(item)
+        self._text_items = []
+
+    def _toggle_text_mode(self, enabled: bool):
+        self._text_mode = enabled
+        if self._pixmap_item is None:
+            return
+        if enabled:
+            self._add_text_items()
         else:
-            self.img_label.setStyleSheet(f"background:{DARK_SURFACE};")
+            self._remove_text_items()
+
+    def _set_loading(self, loading: bool):
+        if loading:
+            self.scene.clear()
+            self._pixmap_item = None
+            self._text_items = []
+            msg = self.scene.addText(f"正在加载第 {self._current_page + 1} 页…")
+            msg.setDefaultTextColor(QColor(DARK_TEXT))
 
     # ── 构建 UI ──────────────────────────────────
 
@@ -148,17 +279,17 @@ class PdfViewerDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        self.scroll = QScrollArea()
-        self.scroll.setAlignment(Qt.AlignCenter)
-        self.scroll.setStyleSheet(
-            f"QScrollArea {{ background:{DARK_SURFACE}; border:none; }}"
+        self.scene = QGraphicsScene()
+        self.view = QGraphicsView(self.scene)
+        self.view.setAlignment(Qt.AlignCenter)
+        self.view.setStyleSheet(
+            f"QGraphicsView {{ background:{DARK_SURFACE}; border:none; }}"
         )
-        self.img_label = QLabel()
-        self.img_label.setAlignment(Qt.AlignCenter)
-        self.img_label.setStyleSheet(f"background:{DARK_SURFACE};")
-        self.scroll.setWidget(self.img_label)
-        self.scroll.setWidgetResizable(True)
-        layout.addWidget(self.scroll, 1)
+        self.view.setRenderHint(QPainter.Antialiasing)
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.view.viewport().installEventFilter(self)
+        layout.addWidget(self.view, 1)
 
         # 导航栏
         nav = QHBoxLayout()
@@ -212,6 +343,24 @@ class PdfViewerDialog(QDialog):
         action_row = QHBoxLayout()
         action_row.setSpacing(8)
 
+        self.btn_text_mode = QPushButton()
+        self.btn_text_mode.setFixedSize(36, 32)
+        self.btn_text_mode.setIcon(_get_text_icon())
+        self.btn_text_mode.setIconSize(QSize(20, 20))
+        self.btn_text_mode.setCheckable(True)
+        self.btn_text_mode.setChecked(False)
+        self.btn_text_mode.setToolTip("文字识别：选中后可框选复制")
+        self.btn_text_mode.clicked.connect(self._toggle_text_mode)
+
+        self.btn_copy = QPushButton("复制全部")
+        self.btn_copy.setFixedHeight(32)
+        self.btn_copy.setToolTip("复制当前页全部文字到剪贴板")
+        self.btn_copy.clicked.connect(self._copy_all_text)
+
+        self.btn_download = QPushButton("下载另存")
+        self.btn_download.setFixedHeight(32)
+        self.btn_download.clicked.connect(self._download_pdf)
+
         self.btn_sys = QPushButton("系统打开")
         self.btn_sys.setFixedHeight(32)
         self.btn_sys.clicked.connect(self._open_system)
@@ -221,6 +370,9 @@ class PdfViewerDialog(QDialog):
         self.btn_close.clicked.connect(self.accept)
 
         action_row.addStretch()
+        action_row.addWidget(self.btn_text_mode)
+        action_row.addWidget(self.btn_copy)
+        action_row.addWidget(self.btn_download)
         action_row.addWidget(self.btn_sys)
         action_row.addWidget(self.btn_close)
         layout.addLayout(action_row)
@@ -229,30 +381,61 @@ class PdfViewerDialog(QDialog):
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
 
+    # ── 事件过滤 ─────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if obj is self.view.viewport():
+            if event.type() == QEvent.Wheel:
+                if event.modifiers() == Qt.ControlModifier:
+                    factor = 1.12 if event.angleDelta().y() > 0 else 0.89
+                    self.view.scale(factor, factor)
+                    self._zoom_mode = ""  # 自定义缩放
+                    return True
+            elif event.type() == QEvent.KeyPress:
+                key = event.key()
+                if key == Qt.Key_Left:
+                    self._prev_page()
+                    return True
+                elif key == Qt.Key_Right:
+                    self._next_page()
+                    return True
+                elif key == Qt.Key_Home:
+                    self._go_to_page(0)
+                    return True
+                elif key == Qt.Key_End:
+                    self._go_to_page(self._page_count - 1)
+                    return True
+                elif key == Qt.Key_Escape:
+                    self.accept()
+                    return True
+        return super().eventFilter(obj, event)
+
     # ── 渲染 ─────────────────────────────────────
 
     def _apply_zoom(self):
-        if self._original_pixmap is None:
+        if self._pixmap_item is None:
             return
-        vp = self.scroll.viewport()
+        vp = self.view.viewport()
         if vp is None:
             return
+        vw, vh = vp.width(), vp.height()
+        sr = self.scene.sceneRect()
+        sw, sh = sr.width(), sr.height()
+
+        self.view.resetTransform()
         if self._zoom_mode == "1:1":
-            self.img_label.setPixmap(self._original_pixmap)
+            return
         elif self._zoom_mode == "fit_width":
-            sw = max(vp.width() - 20, 50)
-            pix = self._original_pixmap.scaledToWidth(
-                sw, Qt.SmoothTransformation)
-            self.img_label.setPixmap(pix)
+            s = (vw - 20) / sw if sw > 0 else 1.0
+            self.view.scale(s, s)
         elif self._zoom_mode == "fit_page":
-            sw = max(vp.width() - 20, 50)
-            sh = max(vp.height() - 20, 50)
-            pix = self._original_pixmap.scaled(
-                sw, sh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.img_label.setPixmap(pix)
+            sx = (vw - 20) / sw if sw > 0 else 1.0
+            sy = (vh - 20) / sh if sh > 0 else 1.0
+            s = min(sx, sy)
+            self.view.scale(s, s)
 
     def _update_ui_state(self):
-        n = len(self._pages)
+        n = self._page_count
         is_single = n <= 1
 
         self.btn_prev.setVisible(not is_single)
@@ -265,8 +448,7 @@ class PdfViewerDialog(QDialog):
         self.btn_prev.setEnabled(self._current_page > 0 and not self._rendering)
         self.btn_next.setEnabled(self._current_page < n - 1 and not self._rendering)
 
-        # 无页面时禁用操作按钮
-        has_pages = bool(self._pages) and not self._load_error
+        has_pages = self._page_count > 0 and not self._load_error
         for btn in (self.btn_fit_w, self.btn_fit_p, self.btn_1to1):
             btn.setEnabled(has_pages)
         self.btn_prev.setEnabled(self.btn_prev.isEnabled() and has_pages)
@@ -275,14 +457,15 @@ class PdfViewerDialog(QDialog):
     # ── 翻页 ─────────────────────────────────────
 
     def _go_to_page(self, index):
-        if not self._pages or self._rendering:
+        if self._page_count == 0 or self._rendering:
             return
-        n = len(self._pages)
-        index = max(0, min(index, n - 1))
+        index = max(0, min(index, self._page_count - 1))
         if index != self._current_page:
             self._current_page = index
-            self._original_pixmap = None
-            self.img_label.setPixmap(QPixmap())
+            self.scene.clear()
+            self._pixmap_item = None
+            self._text_items = []
+            self._text_blocks_data = []
             self._update_ui_state()
             self._start_render()
 
@@ -305,7 +488,31 @@ class PdfViewerDialog(QDialog):
             QMessageBox.warning(self, "错误",
                                 f"PDF 文件不存在：\n{self.pdf_path}")
             return
-        os.startfile(self.pdf_path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.pdf_path))
+
+    def _copy_all_text(self):
+        import fitz
+        try:
+            doc = fitz.open(self.pdf_path)
+            page = doc[self._current_page]
+            text = page.get_text()
+            doc.close()
+            if text.strip():
+                QApplication.clipboard().setText(text.strip())
+            else:
+                QMessageBox.information(self, "提示", "当前页面无可复制的文字内容")
+        except Exception as e:
+            QMessageBox.warning(self, "复制失败", f"无法提取文字：\n{e}")
+
+    def _download_pdf(self):
+        import shutil
+        from PyQt5.QtWidgets import QFileDialog
+        dst, _ = QFileDialog.getSaveFileName(
+            self, "另存发票PDF", os.path.basename(self.pdf_path),
+            "PDF 文件 (*.pdf);;所有文件 (*)"
+        )
+        if dst:
+            shutil.copy2(self.pdf_path, dst)
 
     # ── 事件 ─────────────────────────────────────
 
@@ -313,37 +520,19 @@ class PdfViewerDialog(QDialog):
         super().showEvent(e)
         if getattr(self, '_first_show', False):
             self._first_show = False
-            if self._pages and not self._load_error:
-                # 延迟到事件循环就绪后启动渲染，确保信号能投递
+            if self._page_count > 0 and not self._load_error:
                 self._set_loading(True)
                 from PyQt5.QtCore import QTimer
                 QTimer.singleShot(50, self._start_render)
-
-    def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Left:
-            self._prev_page()
-        elif e.key() == Qt.Key_Right:
-            self._next_page()
-        elif e.key() == Qt.Key_Home:
-            self._go_to_page(0)
-        elif e.key() == Qt.Key_End:
-            self._go_to_page(len(self._pages) - 1)
-        elif e.key() == Qt.Key_Escape:
-            self.accept()
-        else:
-            super().keyPressEvent(e)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._apply_zoom()
 
     def closeEvent(self, e):
-        # 取消正在进行的渲染
         if self._worker and self._worker.isRunning():
             self._worker.finished.disconnect()
             self._worker.quit()
             self._worker.wait(1000)
-        self.img_label.setPixmap(QPixmap())
-        if self._pdf:
-            self._pdf.close()
+        self.scene.clear()
         super().closeEvent(e)

@@ -88,3 +88,8 @@ config.json            # 项目根目录，存储 data_dir 路径配置
 - **pdfplumber** ≥ 0.9.0 — PDF 文字/表格提取
 - **openpyxl** ≥ 3.1.0 — Excel 读写
 - Python ≥ 3.12（`pyproject.toml` 声明）
+
+## 经验教训
+
+- **PyQt5 标准控件定制（冻结列、自定义表头、拖拽排序等）必须先查 Qt 官方文档和示例**，不要自己造轮子。Qt 官方有 Frozen Column Example、Sort Filter Model Example 等，直接参考标准做法。
+- 常见场景 → 先搜 `site:doc.qt.io <topic>` 或 `QTableView frozen column Qt official example`

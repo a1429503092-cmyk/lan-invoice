@@ -5,8 +5,16 @@ import os
 import re
 import pdfplumber
 
+from logger import getLogger, log_call
+
+log = getLogger(__name__)
+
 
 # ── PDF 文本提取 ──────────────────────────────
+
+# 匹配两个非 ASCII 字符之间的空白（消除部分 PDF 中文间多余空格）
+_CJK_SPACE_RE = re.compile(r'(?<=[^\x00-\x7f])\s+(?=[^\x00-\x7f])')
+
 
 def _extract_pdf_text(pdf_path: str) -> str:
     """从 PDF 提取全部文本（含表格内容），返回字符串"""
@@ -29,29 +37,37 @@ def _extract_pdf_text(pdf_path: str) -> str:
 # ── 发票类型识别 ──────────────────────────────
 
 _INVOICE_TYPE_PATTERNS = [
-    (r'增值税专用发票',  '增值税专用发票'),
+    (r'增值税专用发票',          '增值税专用发票'),
+    (r'增值税普通发票',          '增值税普通发票'),
+    (r'增值税电子普通发票',      '增值税电子普通发票'),
+    (r'电子普通发票',            '电子普通发票'),
     (r'票\s*通\s*发\s*票|票通电子发票', '票通发票'),
-    (r'增值税普通发票',  '增值税普通发票'),
-    (r'普通发票',        '普通发票'),
-    (r'电子普通发票',    '电子普通发票'),
-    (r'全电发票',        '全电发票'),
+    (r'普通发票',                '普通发票'),
+    (r'全面数字化的电子发票|全电发票|数电票', '全电发票'),
+    (r'机动车销售统一发票',      '机动车销售统一发票'),
+    (r'二手车销售统一发票',      '二手车销售统一发票'),
+    (r'通用机打发票|通用手工发票', '通用发票'),
 ]
 
 
 def _detect_invoice_type(text: str) -> str:
     """识别发票类型，返回类型名称字符串"""
+    # 去中文间空格后做匹配（部分 PDF 文字提取为 电 子 发 票）
+    normalized = _CJK_SPACE_RE.sub("", text)
     # 第一优先：标题括号内容
-    m = re.search(r'电子发票[（(]([^）)]+)[）)]', text[:500])
+    m = re.search(r'(?:电子|数电)?发票[（(]([^）)]+)[）)]', normalized[:500])
     if m:
         return m.group(1).strip()
     # 第二优先：前 500 字符关键词匹配
     for pattern, label in _INVOICE_TYPE_PATTERNS:
-        if re.search(pattern, text[:500]):
+        if re.search(pattern, normalized[:500]):
             return label
     # 第三优先：全文关键词匹配
     for pattern, label in _INVOICE_TYPE_PATTERNS:
-        if re.search(pattern, text):
+        if re.search(pattern, normalized):
             return label
+    # 未匹配时：输出原文前 200 字便于排查
+    log.warning("无法识别发票类型，原文前段:\n%s", text[:300])
     return ""
 
 
@@ -356,6 +372,7 @@ def _extract_sections(text: str) -> tuple[str, str]:
 # ── 主入口 ────────────────────────────────────
 
 
+@log_call
 def parse_invoice_pdf(pdf_path: str) -> dict:
     """解析发票 PDF，返回字段 dict"""
     fname = os.path.basename(pdf_path)
@@ -412,6 +429,15 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
     except Exception as e:
         result["error"] = str(e)
 
+    log.info("解析结果: %s | 类型=%s | 发票号=%s | 购买方=%s | 金额=%s | 税额=%s",
+             fname,
+             result["invoice_type"] or "(未识别)",
+             result["invoice_no"] or "(无)",
+             result["buyer_name"] or "(无)",
+             result["amount"] or "(无)",
+             result["tax_amount"] or "(无)")
+    if result["error"]:
+        log.warning("解析异常: %s | %s", fname, result["error"])
     return result
 
 

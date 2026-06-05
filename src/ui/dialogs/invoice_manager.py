@@ -8,7 +8,8 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QUrl
+from PyQt5.QtGui import QDesktopServices
 
 from ui.theme import TEXT, TEXT_SEC, TEXT_DIM, ACCENT, RED, BG_ALT
 
@@ -117,7 +118,7 @@ class InvoiceManagerDialog(QDialog):
             QMessageBox.warning(self, "文件不存在", f"找不到文件：\n{self.pdf_path or '（无路径信息）'}")
             return
         try:
-            os.startfile(self.pdf_path)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self.pdf_path))
         except Exception as e:
             QMessageBox.warning(self, "打开失败", f"无法打开文件：\n{e}")
 

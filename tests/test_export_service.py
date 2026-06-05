@@ -91,7 +91,7 @@ class TestExportService(unittest.TestCase):
         import openpyxl
         wb = openpyxl.load_workbook(path)
         ws = wb.active
-        self.assertEqual(ws.cell(2, 7).value, "-550.00")  # 金额列
+        self.assertEqual(ws.cell(2, 5).value, "-550.00")  # 金额列
 
     def test_export_with_remark(self):
         inv = self._make_invoice(remark="加急处理")
@@ -101,7 +101,7 @@ class TestExportService(unittest.TestCase):
         import openpyxl
         wb = openpyxl.load_workbook(path)
         ws = wb.active
-        self.assertEqual(ws.cell(2, 14).value, "加急处理")  # 备注列第14列
+        self.assertEqual(ws.cell(2, 12).value, "加急处理")  # 备注列
 
     def test_export_fallback_remark(self):
         inv = self._make_invoice(remark="", error="")
@@ -111,7 +111,7 @@ class TestExportService(unittest.TestCase):
         import openpyxl
         wb = openpyxl.load_workbook(path)
         ws = wb.active
-        self.assertEqual(ws.cell(2, 14).value, "✓")
+        self.assertEqual(ws.cell(2, 12).value, "✓")
 
     def test_summary_row_calculations(self):
         invs = [
@@ -127,9 +127,9 @@ class TestExportService(unittest.TestCase):
         # 汇总行：header(1) + 2 data + empty(4) + summary(5)
         sum_row = 5
         self.assertEqual(ws.cell(sum_row, 1).value, "合计")
-        self.assertEqual(float(ws.cell(sum_row, 7).value), 300.0)  # 金额合计
-        self.assertEqual(float(ws.cell(sum_row, 9).value), 39.0)   # 税额合计
-        self.assertEqual(float(ws.cell(sum_row, 10).value), 339.0)  # 价税合计
+        self.assertEqual(float(ws.cell(sum_row, 5).value), 300.0)  # 金额合计
+        self.assertEqual(float(ws.cell(sum_row, 7).value), 39.0)   # 税额合计
+        self.assertEqual(float(ws.cell(sum_row, 8).value), 339.0)  # 价税合计
 
 
     def test_export_with_error_field(self):
@@ -141,7 +141,7 @@ class TestExportService(unittest.TestCase):
         import openpyxl
         wb = openpyxl.load_workbook(path)
         ws = wb.active
-        self.assertEqual(ws.cell(2, 14).value, "PDF解析失败: 格式错误")
+        self.assertEqual(ws.cell(2, 12).value, "PDF解析失败: 格式错误")
 
     def test_export_large_invoice_list(self):
         """大量发票导出不崩溃"""
