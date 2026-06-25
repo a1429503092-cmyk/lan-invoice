@@ -50,17 +50,23 @@ class Database:
         return self._db_path
 
     def _init_schema(self):
-        try:
-            self._try_init_schema()
-        except sqlite3.DatabaseError:
-            log.warning("数据库文件损坏，重建: %s", self._db_path)
+        """初始化表结构。新文件自动建表，已有文件不做侵入式操作。
+        损坏检测和恢复交由上层 _init_storage 处理。"""
+        if os.path.exists(self._db_path) and os.path.getsize(self._db_path) > 0:
+            # 已有数据库：轻量预检，不修改文件
             try:
-                with open(self._db_path, "wb"):
-                    pass
-                self._try_init_schema()
-            except (OSError, sqlite3.DatabaseError) as e:
-                log.critical("数据库重建失败: %s | %s", self._db_path, e)
-                raise
+                with sqlite3.connect(self._db_path) as conn:
+                    result = conn.execute(
+                        "PRAGMA integrity_check").fetchone()
+                if result[0] != "ok":
+                    log.warning("数据库完整性预检失败: %s", self._db_path)
+                return
+            except sqlite3.DatabaseError:
+                log.warning("数据库文件无法打开，将交由备份恢复: %s",
+                            self._db_path)
+                return
+        # 新建数据库
+        self._try_init_schema()
 
     def _try_init_schema(self):
         with sqlite3.connect(self._db_path) as conn:

@@ -167,10 +167,11 @@ class TestDatabaseIntegrity(unittest.TestCase):
         self.assertTrue(db.integrity_check())
 
     def test_handles_corrupt_db_file(self):
+        """损坏文件：构造不抛异常，integrity_check 返回 False"""
         with open(self.db_path, "wb") as f:
             f.write(b"not a valid sqlite file")
-        db = Database(self.db_path)
-        self.assertTrue(db.integrity_check())
+        db = Database(self.db_path)  # 不抛异常
+        self.assertFalse(db.integrity_check())
         self.assertTrue(os.path.exists(self.db_path))
 
     def test_integrity_check_empty_db(self):

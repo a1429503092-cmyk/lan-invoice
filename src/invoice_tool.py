@@ -146,7 +146,12 @@ class InvoiceApp(QMainWindow):
             if self._backup.restore(self._db.data_file):
                 log.info("已从备份恢复数据库")
             else:
-                log.warning("无可用备份，将使用空数据库")
+                log.warning("无可用备份，重建空数据库")
+                try:
+                    os.remove(self._db.data_file)
+                except OSError:
+                    pass
+                self._db = Database(self._db.data_file)
 
     def _init_record_fields(self, data):
         """统一初始化记录字段默认值；红票金额转负数"""
@@ -1002,6 +1007,10 @@ class InvoiceApp(QMainWindow):
             if not self._worker.wait(3000):
                 log.warning("后台线程未在3秒内结束")
         self._save_data()
+        # 退出时强制执行一次无防抖备份
+        if hasattr(self, '_backup') and hasattr(self, '_db'):
+            self._backup._last_backup_time = 0  # 绕过防抖
+            self._backup.backup(self._db.data_file)
         event.accept()
 
     def _open_settings(self):

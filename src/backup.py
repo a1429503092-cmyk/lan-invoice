@@ -15,6 +15,7 @@ log = getLogger(__name__)
 _BACKUP_DIR_NAME = ".lan-invoice-backup"
 _BACKUP_PATTERN = re.compile(r"^invoices_(\d{8}_\d{6})\.db$")
 _DEBOUNCE_SECONDS = 5  # 两次备份最小间隔
+_MIN_KEEP = 3  # 每个分区至少保留的备份数
 
 
 class BackupService:
@@ -152,17 +153,23 @@ class BackupService:
         dirs = self.get_backup_dirs()
         removed = 0
         for d in dirs:
+            backups = []
             for f in os.listdir(d):
                 m = _BACKUP_PATTERN.match(f)
-                if not m:
-                    continue
-                fp = os.path.join(d, f)
-                try:
-                    if os.path.getmtime(fp) < cutoff:
+                if m:
+                    fp = os.path.join(d, f)
+                    backups.append((os.path.getmtime(fp), fp))
+            # 按时间降序：最新的排前面
+            backups.sort(key=lambda x: x[0], reverse=True)
+            for i, (mtime, fp) in enumerate(backups):
+                if i < _MIN_KEEP:
+                    continue  # 保留最近 N 个
+                if mtime < cutoff:
+                    try:
                         os.remove(fp)
                         removed += 1
-                except OSError:
-                    pass
+                    except OSError:
+                        pass
         if removed > 0:
             log.info("清理过期备份: %d 个", removed)
         return removed

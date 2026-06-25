@@ -160,8 +160,9 @@ class TestCleanup(unittest.TestCase):
                 f.write("")
         svc = BackupService(roots=[self.tmp])
         removed = svc.cleanup(keep_days=0)
-        self.assertEqual(removed, 5)
-        self.assertEqual(len(os.listdir(backup_dir)), 0)
+        # _MIN_KEEP=3 保留最近 3 个，删除 2 个
+        self.assertEqual(removed, 2)
+        self.assertEqual(len(os.listdir(backup_dir)), 3)
 
     def test_cleanup_keeps_recent_backups(self):
         backup_dir = os.path.join(self.tmp, ".lan-invoice-backup")
