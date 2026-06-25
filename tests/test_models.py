@@ -27,8 +27,6 @@ class TestInvoiceDefaults(unittest.TestCase):
         self.assertEqual(inv.invoice_no, "")
         self.assertEqual(inv.invoice_date, "")
         self.assertFalse(inv.is_red)
-        self.assertEqual(inv.screenshots, [])
-        self.assertEqual(inv.contracts, [])
         self.assertEqual(inv.remark, "")
         self.assertEqual(inv.error, "")
         self.assertEqual(inv.tags, {})
@@ -41,8 +39,6 @@ class TestInvoiceToDict(unittest.TestCase):
         d = inv.to_dict()
         self.assertEqual(d["file"], "")
         self.assertEqual(d["is_red"], False)
-        self.assertEqual(d["screenshots"], [])
-        self.assertEqual(d["contracts"], [])
         self.assertEqual(d["tags"], {})
         self.assertEqual(d["attachments"], [])
 
@@ -62,52 +58,44 @@ class TestInvoiceToDict(unittest.TestCase):
             invoice_no="24113000000012345678",
             invoice_date="2024年11月30日",
             is_red=False,
-            screenshots=["/ss/1.png"],
-            contracts=["/ct/1.pdf"],
+            attachments=["/att/1.png"],
+            tags={"企业号": "A01"},
             remark="备注",
             error="",
         )
         d = inv.to_dict()
         self.assertEqual(d["file"], "test.pdf")
         self.assertEqual(d["amount"], "550.00")
-        self.assertEqual(d["screenshots"], ["/ss/1.png"])
-        self.assertEqual(d["contracts"], ["/ct/1.pdf"])
+        self.assertEqual(d["attachments"], ["/att/1.png"])
+        self.assertEqual(d["tags"], {"企业号": "A01"})
 
-    def test_screenshots_is_copy(self):
-        inv = Invoice(screenshots=["a.png"])
+    def test_attachments_is_copy(self):
+        inv = Invoice(attachments=["a.png"])
         d = inv.to_dict()
-        d["screenshots"].append("b.png")
-        self.assertEqual(len(inv.screenshots), 1)  # 不影响原对象
+        d["attachments"].append("b.png")
+        self.assertEqual(len(inv.attachments), 1)  # 不影响原对象
 
 
 class TestInvoiceFromDict(unittest.TestCase):
     def test_full_dict(self):
         d = {
-            "file": "test.pdf",
-            "pdf_path": "/data/test.pdf",
-            "company": "14786",
-            "invoice_type": "增值税专用发票",
-            "buyer_name": "测试公司",
-            "buyer_tax_id": "91350700156534567X",
-            "seller_name": "销售方",
-            "amount": "550.00",
-            "tax_rate": "13%",
-            "tax_amount": "71.50",
-            "total": "621.50",
+            "file": "test.pdf", "pdf_path": "/data/test.pdf",
+            "company": "14786", "invoice_type": "增值税专用发票",
+            "buyer_name": "测试公司", "buyer_tax_id": "91350700156534567X",
+            "seller_name": "销售方", "amount": "550.00", "tax_rate": "13%",
+            "tax_amount": "71.50", "total": "621.50",
             "invoice_no": "24113000000012345678",
-            "invoice_date": "2024年11月30日",
-            "is_red": True,
-            "screenshots": ["a.png", "b.png"],
-            "contracts": ["c.pdf"],
-            "remark": "ok",
-            "error": "",
+            "invoice_date": "2024年11月30日", "is_red": True,
+            "attachments": ["a.png", "c.pdf"],
+            "tags": {"企业号": "A01"},
+            "remark": "ok", "error": "",
         }
         inv = Invoice.from_dict(d)
         self.assertEqual(inv.file, "test.pdf")
         self.assertEqual(inv.amount, "550.00")
         self.assertTrue(inv.is_red)
-        self.assertEqual(inv.screenshots, ["a.png", "b.png"])
-        self.assertEqual(inv.contracts, ["c.pdf"])
+        self.assertEqual(inv.attachments, ["a.png", "c.pdf"])
+        self.assertEqual(inv.tags, {"企业号": "A01"})
 
     def test_partial_dict(self):
         d = {"file": "x.pdf", "invoice_no": "12345"}
@@ -115,8 +103,32 @@ class TestInvoiceFromDict(unittest.TestCase):
         self.assertEqual(inv.file, "x.pdf")
         self.assertEqual(inv.invoice_no, "12345")
         self.assertEqual(inv.buyer_name, "")
-        self.assertEqual(inv.screenshots, [])
+        self.assertEqual(inv.attachments, [])
         self.assertFalse(inv.is_red)
+
+    def test_migrates_old_screenshots_and_contracts(self):
+        """旧数据 screenshots/contracts 自动合并到 attachments"""
+        d = {
+            "file": "old.pdf", "invoice_no": "999",
+            "screenshots": ["/ss/1.png", "/ss/2.png"],
+            "contracts": ["/ct/a.pdf"],
+            "attachments": ["/att/existing.png"],
+        }
+        inv = Invoice.from_dict(d)
+        self.assertIn("/ss/1.png", inv.attachments)
+        self.assertIn("/ss/2.png", inv.attachments)
+        self.assertIn("/ct/a.pdf", inv.attachments)
+        self.assertIn("/att/existing.png", inv.attachments)
+
+    def test_migrates_no_duplicates(self):
+        """重复路径不重复添加"""
+        d = {
+            "file": "old.pdf", "invoice_no": "999",
+            "screenshots": ["/dup.png"],
+            "attachments": ["/dup.png"],
+        }
+        inv = Invoice.from_dict(d)
+        self.assertEqual(inv.attachments, ["/dup.png"])
 
     def test_empty_dict(self):
         inv = Invoice.from_dict({})
@@ -198,14 +210,14 @@ class TestInvoiceDictCompat(unittest.TestCase):
         self.assertEqual(inv.remark, "✓")
 
     def test_setdefault_empty_list(self):
-        inv = Invoice(screenshots=[])
-        inv.setdefault("screenshots", ["default.png"])
-        self.assertEqual(inv.screenshots, ["default.png"])
+        inv = Invoice(attachments=[])
+        inv.setdefault("attachments", ["default.png"])
+        self.assertEqual(inv.attachments, ["default.png"])
 
     def test_setdefault_preserves_nonempty_list(self):
-        inv = Invoice(screenshots=["a.png"])
-        inv.setdefault("screenshots", ["default.png"])
-        self.assertEqual(inv.screenshots, ["a.png"])
+        inv = Invoice(attachments=["a.png"])
+        inv.setdefault("attachments", ["default.png"])
+        self.assertEqual(inv.attachments, ["a.png"])
 
 
 class TestInvoiceTags(unittest.TestCase):

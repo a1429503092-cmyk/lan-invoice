@@ -88,9 +88,8 @@ class InvoiceService:
         ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
         return f"{safe_name}_{orig_base}_{ts}{ext}"
 
-    # Backward-compatible aliases (deprecated)
-    screenshot_namer = _attachment_namer
-    contract_namer = _attachment_namer
+    # Backward-compatible alias (deprecated)
+    namer = _attachment_namer
 
     def copy_invoice_pdf(self, src: str) -> str:
         """复制发票 PDF 到 data/invoices/"""

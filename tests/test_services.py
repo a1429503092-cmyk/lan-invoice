@@ -93,7 +93,7 @@ class TestInvoiceService(unittest.TestCase):
 
         added = self.svc.add_attachments(
             inv, [src], "attachments", self.attachment_dir,
-            self.svc.screenshot_namer
+            self.svc.namer
         )
         self.assertEqual(added, 1)
         self.assertEqual(len(inv.attachments), 1)
@@ -108,7 +108,7 @@ class TestInvoiceService(unittest.TestCase):
 
         added = self.svc.add_attachments(
             inv, [src], "attachments", self.attachment_dir,
-            self.svc.contract_namer
+            self.svc.namer
         )
         self.assertEqual(added, 1)
         self.assertEqual(len(inv.attachments), 1)
@@ -118,7 +118,7 @@ class TestInvoiceService(unittest.TestCase):
         inv = Invoice()
         added = self.svc.add_attachments(
             inv, ["/nonexistent.png"], "attachments", self.attachment_dir,
-            self.svc.screenshot_namer
+            self.svc.namer
         )
         self.assertEqual(added, 0)
 
@@ -130,7 +130,7 @@ class TestInvoiceService(unittest.TestCase):
             f.write(b"x")
         added = self.svc.add_attachments(
             inv, [src], "attachments", self.attachment_dir,
-            self.svc.screenshot_namer
+            self.svc.namer
         )
         self.assertEqual(added, 1)
 
@@ -166,16 +166,16 @@ class TestInvoiceService(unittest.TestCase):
         self.assertTrue(os.path.exists(dst))
         self.assertIn("invoices", dst)
 
-    def test_screenshot_namer(self):
-        name = InvoiceService.screenshot_namer("/path/to/img.PNG", "INV001")
+    def test_namer(self):
+        name = InvoiceService.namer("/path/to/img.PNG", "INV001")
         self.assertTrue(name.startswith("INV001_img_"))
         self.assertTrue(name.endswith(".png"))
         # 无扩展名文件默认 .dat
-        name2 = InvoiceService.screenshot_namer("/path/to/img", "INV001")
+        name2 = InvoiceService.namer("/path/to/img", "INV001")
         self.assertTrue(name2.endswith(".dat"))
 
-    def test_contract_namer(self):
-        name = InvoiceService.contract_namer("/path/to/合同文件.pdf", "INV002")
+    def test_namer(self):
+        name = InvoiceService.namer("/path/to/合同文件.pdf", "INV002")
         self.assertTrue(name.startswith("INV002_合同文件_"))
         self.assertTrue(name.endswith(".pdf"))
 
@@ -231,7 +231,7 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
 
         added = self.svc.add_attachments(
             inv, files, "attachments", self.svc._attachment_dir,
-            InvoiceService.screenshot_namer
+            InvoiceService.namer
         )
         self.assertEqual(added, 3)
         self.assertEqual(len(inv.attachments), 3)
@@ -244,7 +244,7 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
 
         added = self.svc.add_attachments(
             inv, [good, "/nonexistent/bad.png"], "attachments",
-            self.svc._attachment_dir, InvoiceService.screenshot_namer
+            self.svc._attachment_dir, InvoiceService.namer
         )
         self.assertEqual(added, 1)
 
@@ -256,7 +256,7 @@ class TestAddAttachmentsEdgeCases(unittest.TestCase):
 
         added = self.svc.add_attachments(
             inv, [src], "attachments", self.svc._attachment_dir,
-            InvoiceService.screenshot_namer
+            InvoiceService.namer
         )
         self.assertEqual(added, 1)
         self.assertEqual(len(inv.attachments), 2)
@@ -301,7 +301,7 @@ class TestAddAttachmentsOSError(TestInvoiceService):
         with unittest.mock.patch("shutil.copy2", side_effect=OSError("mock fail")):
             added = self.svc.add_attachments(
                 inv, [src], "attachments", self.svc._attachment_dir,
-                InvoiceService.screenshot_namer
+                InvoiceService.namer
             )
         self.assertEqual(added, 0)
 

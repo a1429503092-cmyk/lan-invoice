@@ -87,15 +87,13 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._section_title("数据存储"))
 
         invoice_count = len(self._app.records)
-        screenshots = sum(len(r.get("screenshots", [])) for r in self._app.records)
-        contracts = sum(len(r.get("contracts", [])) for r in self._app.records)
+        attachments = sum(len(r.get("attachments", [])) for r in self._app.records)
         data_size = self._calc_data_size()
 
         stats_row = QHBoxLayout()
         stats_row.setSpacing(24)
         stats_row.addWidget(self._stat_label("发票", f"{invoice_count} 条"))
-        stats_row.addWidget(self._stat_label("截图", f"{screenshots} 个"))
-        stats_row.addWidget(self._stat_label("合同", f"{contracts} 个"))
+        stats_row.addWidget(self._stat_label("附件", f"{attachments} 个"))
         stats_row.addWidget(self._stat_label("大小", data_size))
         stats_row.addStretch()
         layout.addLayout(stats_row)
@@ -260,12 +258,6 @@ class SettingsDialog(QDialog):
             return True
         if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
             return True
-        screenshots_dir = os.path.join(dirpath, "screenshots")
-        if os.path.isdir(screenshots_dir) and os.listdir(screenshots_dir):
-            return True
-        contracts_dir = os.path.join(dirpath, "contracts")
-        if os.path.isdir(contracts_dir) and os.listdir(contracts_dir):
-            return True
         invoices_dir = os.path.join(dirpath, "invoices")
         if os.path.isdir(invoices_dir) and os.listdir(invoices_dir):
             return True
@@ -277,14 +269,10 @@ class SettingsDialog(QDialog):
 
         if migrate_old:
             os.makedirs(new_dir, exist_ok=True)
-            os.makedirs(os.path.join(new_dir, "screenshots"), exist_ok=True)
-            os.makedirs(os.path.join(new_dir, "contracts"), exist_ok=True)
             os.makedirs(os.path.join(new_dir, "invoices"), exist_ok=True)
             errors = []
 
             old_data_file = self._app._data_file
-            old_screenshot_dir = self._app._screenshot_dir
-            old_contract_dir = self._app._contract_dir
             old_inv_dir = os.path.join(self._app._data_dir, "invoices")
 
             if os.path.exists(old_data_file):
@@ -293,17 +281,16 @@ class SettingsDialog(QDialog):
                 except Exception as e:
                     errors.append(f"invoices.db: {e}")
 
-            for src_dir, sub in [(old_screenshot_dir, "screenshots"), (old_contract_dir, "contracts"), (old_inv_dir, "invoices")]:
-                if src_dir and os.path.isdir(src_dir):
-                    dst_dir = os.path.join(new_dir, sub)
-                    for fname in os.listdir(src_dir):
-                        src = os.path.join(src_dir, fname)
-                        dst = os.path.join(dst_dir, fname)
-                        try:
-                            if os.path.isfile(src) and not os.path.exists(dst):
-                                shutil.copy2(src, dst)
-                        except Exception as e:
-                            errors.append(f"{sub}/{fname}: {e}")
+            if old_inv_dir and os.path.isdir(old_inv_dir):
+                dst_dir = os.path.join(new_dir, "invoices")
+                for fname in os.listdir(old_inv_dir):
+                    src = os.path.join(old_inv_dir, fname)
+                    dst = os.path.join(dst_dir, fname)
+                    try:
+                        if os.path.isfile(src) and not os.path.exists(dst):
+                            shutil.copy2(src, dst)
+                    except Exception as e:
+                        errors.append(f"invoices/{fname}: {e}")
 
             if errors:
                 QMessageBox.warning(self, "部分文件迁移失败",
@@ -312,11 +299,7 @@ class SettingsDialog(QDialog):
         # 更新路径
         self._app._data_dir = new_dir
         self._app._data_file = os.path.join(new_dir, "invoices.db")
-        self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
-        self._app._contract_dir = os.path.join(new_dir, "contracts")
         self._app._attachment_dir = new_dir
-        os.makedirs(self._app._screenshot_dir, exist_ok=True)
-        os.makedirs(self._app._contract_dir, exist_ok=True)
         os.makedirs(os.path.join(new_dir, "invoices"), exist_ok=True)
 
         # 更新 Service
@@ -405,10 +388,11 @@ class SettingsDialog(QDialog):
             items.append(("file", bat_src, os.path.join(dst_dir, "启动.bat")))
         if os.path.exists(self._app._data_file):
             items.append(("file", self._app._data_file, os.path.join(dst_dir, "invoices.db")))
-        if os.path.isdir(self._app._screenshot_dir):
-            items.append(("dir", self._app._screenshot_dir, os.path.join(dst_dir, "screenshots")))
-        if os.path.isdir(self._app._contract_dir):
-            items.append(("dir", self._app._contract_dir, os.path.join(dst_dir, "contracts")))
+        # 旧目录兼容：迁移后可能遗留的 screenshots/contracts
+        for sub in ("screenshots", "contracts"):
+            old_dir = os.path.join(self._app._data_dir, sub)
+            if os.path.isdir(old_dir):
+                items.append(("dir", old_dir, os.path.join(dst_dir, sub)))
 
         if not items:
             QMessageBox.warning(self, "无内容", "未找到可复制的软件文件。")

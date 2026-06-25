@@ -89,6 +89,12 @@ class Database:
             return []
 
     def _row_to_invoice(self, row) -> Invoice:
+        # 兼容旧数据：screenshots/contracts → attachments 合并（与 from_dict 一致）
+        atts = self._parse_json_list(row["attachments"])
+        for col in ("screenshots", "contracts"):
+            for p in self._parse_json_list(row[col]):
+                if p and p not in atts:
+                    atts.append(p)
         return Invoice(
             file=row["file"] or "",
             pdf_path=row["pdf_path"] or "",
@@ -104,10 +110,8 @@ class Database:
             invoice_no=row["invoice_no"] or "",
             invoice_date=row["invoice_date"] or "",
             is_red=bool(row["is_red"]),
-            screenshots=self._parse_json_list(row["screenshots"]),
-            contracts=self._parse_json_list(row["contracts"]),
             tags=self._parse_json_dict(row["tags"]),
-            attachments=self._parse_json_list(row["attachments"]),
+            attachments=atts,
             remark=row["remark"] or "",
             error=row["error"] or "",
         )
@@ -149,8 +153,7 @@ class Database:
                         inv.buyer_name, inv.buyer_tax_id, inv.seller_name,
                         inv.amount, inv.tax_rate, inv.tax_amount, inv.total,
                         inv.invoice_no, inv.invoice_date, int(inv.is_red),
-                        json.dumps(inv.screenshots, ensure_ascii=False),
-                        json.dumps(inv.contracts, ensure_ascii=False),
+                        "[]", "[]",
                         json.dumps(inv.tags, ensure_ascii=False),
                         json.dumps(inv.attachments, ensure_ascii=False),
                         inv.remark, inv.error,

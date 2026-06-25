@@ -54,7 +54,7 @@ class ParseWorker(QThread):
                     "seller_name": "", "amount": "", "tax_rate": "",
                     "tax_amount": "", "total": "", "invoice_no": "",
                     "invoice_date": "", "company": "",
-                    "screenshots": [], "contracts": [], "remark": "", "is_red": False
+                    "remark": "", "is_red": False
                 }
             self.result_ready.emit(data)
             self.progress.emit(int(i / total * 100))

@@ -395,8 +395,6 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
         "total": "",
         "invoice_no": "",
         "invoice_date": "",
-        "screenshots": [],
-        "contracts": [],
         "error": "",
         "is_red": False,
     }

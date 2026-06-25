@@ -150,7 +150,9 @@ class TestDataMigration(unittest.TestCase):
         }])
         invoices = self.repo.load()
         self.assertEqual(invoices[0].tags.get("企业号"), "99999")
-        self.assertEqual(invoices[0].attachments, ["/new/att/1.png"])
+        # from_dict 合并旧 screenshots 到 attachments，保留原有附件
+        self.assertIn("/new/att/1.png", invoices[0].attachments)
+        self.assertIn("/old/ss/1.png", invoices[0].attachments)
 
     def test_migrate_empty_old_data(self):
         """空旧数据正常迁移"""

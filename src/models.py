@@ -21,8 +21,6 @@ class Invoice:
     invoice_no: str = ""
     invoice_date: str = ""
     is_red: bool = False
-    screenshots: list[str] = field(default_factory=list)
-    contracts: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
     remark: str = ""
@@ -47,8 +45,6 @@ class Invoice:
             "invoice_no": self.invoice_no,
             "invoice_date": self.invoice_date,
             "is_red": self.is_red,
-            "screenshots": list(self.screenshots),
-            "contracts": list(self.contracts),
             "tags": dict(self.tags),
             "attachments": list(self.attachments),
             "remark": self.remark,
@@ -58,6 +54,12 @@ class Invoice:
     @classmethod
     def from_dict(cls, d: dict) -> "Invoice":
         """从 dict 创建实例，兼容旧数据缺失字段"""
+        # 兼容旧数据：screenshots/contracts 合并到 attachments
+        atts = list(d.get("attachments", []))
+        for old_field in ("screenshots", "contracts"):
+            for p in d.get(old_field, []):
+                if p and p not in atts:
+                    atts.append(p)
         return cls(
             file=d.get("file", ""),
             pdf_path=d.get("pdf_path", ""),
@@ -73,10 +75,8 @@ class Invoice:
             invoice_no=d.get("invoice_no", ""),
             invoice_date=d.get("invoice_date", ""),
             is_red=bool(d.get("is_red", False)),
-            screenshots=list(d.get("screenshots", [])),
-            contracts=list(d.get("contracts", [])),
             tags=dict(d.get("tags", {})),
-            attachments=list(d.get("attachments", [])),
+            attachments=atts,
             remark=d.get("remark", ""),
             error=d.get("error", ""),
         )

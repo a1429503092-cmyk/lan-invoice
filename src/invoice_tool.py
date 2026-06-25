@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 发票归档
-功能：发票PDF识别、付款截图管理、合同附件管理、按月筛选、导出Excel
+功能：发票PDF识别、附件管理、按月筛选、导出Excel
 """
 
 import sys
@@ -22,8 +22,7 @@ from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QFontDatabase
 
-from dialogs import (ImageViewerDialog, ContractManagerDialog,
-                     SettingsDialog, DeleteConfirmDialog)
+from dialogs import SettingsDialog, DeleteConfirmDialog
 from worker import ParseWorker
 from filters import (record_matches_filter, get_available_years,
                      get_available_inv_types, get_available_sellers)
@@ -52,8 +51,8 @@ FREEZE_COL_WIDTH = 110  # 冻结操作列宽度
 COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
 
 # 支持的文件扩展名
-IMG_EXTS      = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
-CONTRACT_EXTS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls'}  # 合同支持格式
+IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
+ATTACH_EXTS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls'}  # 附件文档格式
 
 
 class InvoiceApp(QMainWindow):
@@ -74,11 +73,7 @@ class InvoiceApp(QMainWindow):
         self._data_dir = self._init_data_dir()
         self._data_file      = os.path.join(self._data_dir, "invoices.db")
         self._attachment_dir = self._data_dir
-        self._screenshot_dir = os.path.join(self._data_dir, "screenshots")
-        self._contract_dir   = os.path.join(self._data_dir, "contracts")
-        os.makedirs(self._data_dir,       exist_ok=True)
-        os.makedirs(self._screenshot_dir, exist_ok=True)
-        os.makedirs(self._contract_dir,   exist_ok=True)
+        os.makedirs(self._data_dir, exist_ok=True)
 
         # SQLite + 备份
         self._db = Database(self._data_file)
@@ -95,10 +90,6 @@ class InvoiceApp(QMainWindow):
         self._filter_company     = ""     # 企业号搜索（模糊匹配）
         self._filter_buyer       = ""     # 购买方名称/税号搜索（模糊匹配）
         self._show_advanced_filter = False
-
-        # 拖拽模式：'pdf'=导入发票, 'screenshot'=添加截图, 'contract'=添加合同
-        # 通过键盘修饰键区分：Alt=截图, Shift=合同, 无修饰=PDF
-        self._drag_mode = None
         self._shown_records = []   # 当前筛选后的记录缓存，_rebuild_table 时更新
         self._sort_column = None
         self._sort_ascending = True
@@ -161,8 +152,6 @@ class InvoiceApp(QMainWindow):
         # 兼容旧 dict（逐步淘汰）
         for field in ("pdf_path", "invoice_type", "seller_name", "remark"):
             data.setdefault(field, "")
-        data.setdefault("screenshots", [])
-        data.setdefault("contracts", [])
         data.setdefault("tags", {})
         data.setdefault("is_red", False)
         if data.get("is_red"):
@@ -889,7 +878,7 @@ class InvoiceApp(QMainWindow):
                 self._open_search()
                 return
             elif key == Qt.Key_V:
-                # Ctrl+V 粘贴截图或合同
+                # Ctrl+V 粘贴附件
                 rows = sorted(set(item.row() for item in self.table.selectedItems()))
                 if not rows:
                     self.status.showMessage("请先选中一行，再按 Ctrl+V 粘贴附件")
@@ -920,35 +909,29 @@ class InvoiceApp(QMainWindow):
     def dropEvent(self, e: QDropEvent):
         self._hide_drop_overlay()
         urls = e.mimeData().urls()
-        pdf_files  = []
-        img_files  = []
-        doc_files  = []
+        pdf_files = []
+        att_files = []
 
         for u in urls:
             path = u.toLocalFile()
-            ext  = os.path.splitext(path)[1].lower()
+            ext = os.path.splitext(path)[1].lower()
             if ext == '.pdf':
-                pdf_files.append(path)   # PDF 始终作为发票导入
-            elif ext in IMG_EXTS:
-                img_files.append(path)
-            elif ext in CONTRACT_EXTS:
-                doc_files.append(path)
+                pdf_files.append(path)
+            else:
+                att_files.append(path)
 
-        # PDF → 发票导入（不依赖选中状态）
         if pdf_files:
             self._start_parse(pdf_files)
 
-        # 图片/文档 → 附件（需要选中行）
-        rows = sorted(set(item.row() for item in self.table.selectedItems()))
-        other_files = img_files + doc_files
-        if other_files:
+        if att_files:
+            rows = sorted(set(item.row() for item in self.table.selectedItems()))
             if not rows:
                 QMessageBox.information(
                     self, "提示",
-                    "请先选中一行，再将图片/文档拖入作为附件添加。\n"
+                    "请先选中一行，再将文件拖入作为附件添加。"
                 )
             else:
-                self._add_attachments_from_paths(rows[0], other_files)
+                self._add_attachments_from_paths(rows[0], att_files)
 
     def _show_drop_overlay(self, urls):
         if not hasattr(self, '_drop_overlay'):
@@ -1294,73 +1277,7 @@ class InvoiceApp(QMainWindow):
         dlg = PdfViewerDialog(path, parent=self)
         dlg.exec_()
 
-    # ── 截图单元格 ───────────────────────────────
-    def _set_screenshot_cell(self, row, data):
-        screenshots = data.get("screenshots", [])
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(4)
-
-        if screenshots:
-            lbl = QLabel(f"[{len(screenshots)}]")
-            lbl.setStyleSheet(f"color:{ACCENT}; font-size:12px; font-weight:bold;")
-            btn_v = QPushButton("查看")
-            btn_v.setFixedHeight(24)
-            btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{ACCENT}; border:none; background:transparent;")
-            btn_v.clicked.connect(lambda _, r=row: self._view_screenshots(r))
-            lay.addWidget(lbl)
-            lay.addWidget(btn_v)
-        else:
-            lbl = QLabel("—")
-            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
-            lay.addWidget(lbl)
-
-        btn_add = QPushButton("＋")
-        btn_add.setFixedHeight(24)
-        btn_add.setFixedWidth(26)
-        btn_add.setToolTip("添加付款截图")
-        btn_add.setStyleSheet(f"font-size:13px; padding:0; color:{ACCENT}; border:none; background:transparent;")
-        btn_add.clicked.connect(lambda _, r=row: self._add_screenshot(r))
-        lay.addWidget(btn_add)
-        lay.addStretch()
-        self.table.setCellWidget(row, self._current_col_idx["付款截图"], w)
-
-    # ── 合同单元格 ───────────────────────────────
-    def _set_contract_cell(self, row, data):
-        contracts = data.get("contracts", [])
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(4, 4, 4, 4)
-        lay.setSpacing(4)
-
-        if contracts:
-            lbl = QLabel(f"[{len(contracts)}]")
-            lbl.setStyleSheet(f"color:{GREEN}; font-size:12px; font-weight:bold;")
-            btn_v = QPushButton("查看")
-            btn_v.setFixedHeight(24)
-            btn_v.setFixedWidth(40)
-            btn_v.setStyleSheet(f"font-size:11px; padding:1px 4px; color:{GREEN}; border:none; background:transparent;")
-            btn_v.clicked.connect(lambda _, r=row: self._view_contracts(r))
-            lay.addWidget(lbl)
-            lay.addWidget(btn_v)
-        else:
-            lbl = QLabel("—")
-            lbl.setStyleSheet(f"color:{TEXT_DIM}; font-size:12px;")
-            lay.addWidget(lbl)
-
-        btn_add = QPushButton("＋")
-        btn_add.setFixedHeight(24)
-        btn_add.setFixedWidth(26)
-        btn_add.setToolTip("添加合同文件（PDF/Word）")
-        btn_add.setStyleSheet(f"font-size:13px; padding:0; color:{GREEN}; border:none; background:transparent;")
-        btn_add.clicked.connect(lambda _, r=row: self._add_contract(r))
-        lay.addWidget(btn_add)
-        lay.addStretch()
-        self.table.setCellWidget(row, self._current_col_idx["合同"], w)
-
-    # ── 附件单元格（统一截图+合同）─────────────────
+    # ── 附件单元格 ────────────────────────────────
     def _set_attachment_cell(self, row, data):
         attachments = data.get("attachments", [])
         w = QWidget()
@@ -1429,102 +1346,19 @@ class InvoiceApp(QMainWindow):
             return shown[row]
         return None
 
-    def _add_screenshot(self, row):
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "选择付款截图", "",
-            "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;所有文件 (*)"
-        )
-        if files:
-            self._add_screenshots_from_paths(row, files)
-
-    def _add_screenshots_from_paths(self, row, src_paths):
-        rec = self._get_record_by_row(row)
-        if rec is None:
-            return
-        added = self._svc.add_attachments(rec, src_paths, "screenshots",
-                                           self._screenshot_dir,
-                                           InvoiceService.screenshot_namer)
-        if added > 0:
-            self._set_screenshot_cell(row, rec)
-            self._save_data()
-            self.status.showMessage(f"已为该发票添加 {added} 张付款截图")
-
-    def _view_screenshots(self, row):
-        rec = self._get_record_by_row(row)
-        if rec is None:
-            return
-        screenshots = rec.get("screenshots", [])
-        if not screenshots:
-            QMessageBox.information(self, "提示", "该发票暂无付款截图")
-            return
-        dlg = ImageViewerDialog(screenshots, parent=self)
-        dlg.exec_()
-        # 同步删除操作
-        remaining = dlg.get_remaining_paths()
-        if len(remaining) != len(screenshots):
-            rec["screenshots"] = remaining
-            self._set_screenshot_cell(row, rec)
-            self._save_data()
-
-    # ── 合同操作 ─────────────────────────────────
-    def _add_contract(self, row):
-        """通过文件选择对话框添加合同"""
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "选择合同文件", "",
-            "合同文件 (*.pdf *.docx *.doc *.xlsx *.xls);;所有文件 (*)"
-        )
-        if files:
-            self._add_contracts_from_paths(row, files)
-
-    def _add_contracts_from_paths(self, row, src_paths):
-        """将合同文件复制到 contracts 目录并绑定到指定行"""
-        rec = self._get_record_by_row(row)
-        if rec is None:
-            return
-        added = self._svc.add_attachments(rec, src_paths, "contracts",
-                                           self._contract_dir,
-                                           InvoiceService.contract_namer)
-        if added > 0:
-            self._set_contract_cell(row, rec)
-            self._save_data()
-            self.status.showMessage(f"已为该发票添加 {added} 份合同")
-
-    # ── 统一附件添加 ─────────────────────────────
+    # ── 附件操作 ─────────────────────────────────
     def _add_attachments_from_paths(self, row, src_paths):
-        """统一添加附件（图片+文档）"""
+        """添加附件（图片+文档）"""
         rec = self._get_record_by_row(row)
         if rec is None:
             return
         added = self._svc.add_attachments(rec, src_paths, "attachments",
                                           self._attachment_dir,
-                                          InvoiceService._attachment_namer)
+                                          InvoiceService.namer)
         if added > 0:
             self._set_attachment_cell(row, rec)
             self._save_data()
             self.status.showMessage(f"已添加 {added} 个附件")
-
-    def _view_contracts(self, row):
-        """打开合同管理对话框"""
-        rec = self._get_record_by_row(row)
-        if rec is None:
-            return
-        contracts = rec.get("contracts", [])
-        if not contracts:
-            QMessageBox.information(self, "提示", "该发票暂无合同文件")
-            return
-        dlg = ContractManagerDialog(
-            contracts,
-            rec_name=rec.get("buyer_name", "") or rec.get("file", ""),
-            parent=self
-        )
-        dlg.exec_()
-        # 同步对话框中可能的删除操作
-        if dlg.contract_paths != contracts:
-            rec["contracts"] = dlg.contract_paths
-            self._set_contract_cell(row, rec)
-            self._save_data()
-
-    # ── 统一附件操作 ─────────────────────────────
     def _add_attachment(self, row):
         from ui.dialogs.add_attachment import AddAttachmentDialog
         dlg = AddAttachmentDialog(parent=self)
@@ -1586,13 +1420,13 @@ class InvoiceApp(QMainWindow):
             for u in mime.urls():
                 path = u.toLocalFile()
                 ext  = os.path.splitext(path)[1].lower()
-                if ext in IMG_EXTS or ext in CONTRACT_EXTS:
+                if ext in IMG_EXTS or ext in ATTACH_EXTS:
                     other_files.append(path)
             if other_files:
                 self._add_attachments_from_paths(row, other_files)
                 return
 
-        self.status.showMessage("剪贴板中没有可用内容（图片或合同文件），请先复制后再粘贴")
+        self.status.showMessage("剪贴板中没有可用内容，请先复制图片或文件后再粘贴")
 
     # ── viewport 事件过滤器 ────────────────────────
     def eventFilter(self, obj, event):
@@ -1712,52 +1546,6 @@ class InvoiceApp(QMainWindow):
 
     def _selected_rows(self):
         return sorted(set(item.row() for item in self.table.selectedItems()))
-
-    def _ctx_add_screenshot(self):
-        for row in self._selected_rows():
-            self._add_screenshot(row)
-
-    def _ctx_paste_screenshot(self):
-        rows = self._selected_rows()
-        if rows:
-            self._paste_from_clipboard(rows[0])
-
-    def _ctx_view_screenshot(self):
-        rows = self._selected_rows()
-        if rows:
-            self._view_screenshots(rows[0])
-
-    def _ctx_delete_screenshots(self):
-        for row in self._selected_rows():
-            rec = self._get_record_by_row(row)
-            if rec:
-                rec["screenshots"] = []
-                self._set_screenshot_cell(row, rec)
-        self._save_data()
-        self.status.showMessage("已清除选中行的截图记录")
-
-    def _ctx_add_contract(self):
-        for row in self._selected_rows():
-            self._add_contract(row)
-
-    def _ctx_paste_contract(self):
-        rows = self._selected_rows()
-        if rows:
-            self._paste_from_clipboard(rows[0])
-
-    def _ctx_view_contracts(self):
-        rows = self._selected_rows()
-        if rows:
-            self._view_contracts(rows[0])
-
-    def _ctx_delete_contracts(self):
-        for row in self._selected_rows():
-            rec = self._get_record_by_row(row)
-            if rec:
-                rec["contracts"] = []
-                self._set_contract_cell(row, rec)
-        self._save_data()
-        self.status.showMessage("已清除选中行的合同记录")
 
     def _ctx_add_attachment(self):
         for row in self._selected_rows():

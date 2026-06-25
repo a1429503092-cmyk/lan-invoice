@@ -87,9 +87,9 @@ class TestDatabaseSaveLoad(unittest.TestCase):
             seller_name="卖方", amount="1000.00", tax_rate="13%",
             tax_amount="130.00", total="1130.00", invoice_no="NO001",
             invoice_date="2025年01月15日", is_red=True,
-            screenshots=["/ss/1.png"], contracts=["/ct/1.pdf"],
             tags={"企业号": "A01", "项目": "P1"},
-            attachments=["/att/1.png"], remark="备注内容", error=""
+            attachments=["/att/1.png", "/ss/1.png", "/ct/1.pdf"],
+            remark="备注内容", error=""
         )
         self.db.save([inv])
         loaded = self.db.load()[0]
@@ -107,10 +107,8 @@ class TestDatabaseSaveLoad(unittest.TestCase):
         self.assertEqual(loaded.invoice_no, "NO001")
         self.assertEqual(loaded.invoice_date, "2025年01月15日")
         self.assertTrue(loaded.is_red)
-        self.assertEqual(loaded.screenshots, ["/ss/1.png"])
-        self.assertEqual(loaded.contracts, ["/ct/1.pdf"])
         self.assertEqual(loaded.tags, {"企业号": "A01", "项目": "P1"})
-        self.assertEqual(loaded.attachments, ["/att/1.png"])
+        self.assertEqual(loaded.attachments, ["/att/1.png", "/ss/1.png", "/ct/1.pdf"])
         self.assertEqual(loaded.remark, "备注内容")
 
     def test_load_returns_list_copy(self):
@@ -194,7 +192,7 @@ class TestDatabaseMigration(unittest.TestCase):
             json.dump(data, f, ensure_ascii=False)
 
     def _base_record(self, **kw):
-        d = {"file": "", "invoice_no": "", "screenshots": [], "contracts": [],
+        d = {"file": "", "invoice_no": "",
              "tags": {}, "attachments": [], "remark": "", "error": ""}
         d.update(kw)
         return d
@@ -244,6 +242,7 @@ class TestDatabaseMigration(unittest.TestCase):
         self.assertEqual(count, 0)
 
     def test_migrate_preserves_list_fields(self):
+        """from_dict 自动合并旧 screenshots/contracts 到 attachments"""
         self._write_json([self._base_record(
             file="a.pdf", invoice_no="111",
             screenshots=["/ss/1.png", "/ss/2.png"],
@@ -253,10 +252,11 @@ class TestDatabaseMigration(unittest.TestCase):
         )])
         self.db.migrate_from_json(self.json_path)
         result = self.db.load()[0]
-        self.assertEqual(result.screenshots, ["/ss/1.png", "/ss/2.png"])
-        self.assertEqual(result.contracts, ["/ct/a.pdf"])
         self.assertEqual(result.tags, {"企业号": "A"})
-        self.assertEqual(result.attachments, ["/att/x.png"])
+        self.assertIn("/att/x.png", result.attachments)
+        self.assertIn("/ss/1.png", result.attachments)
+        self.assertIn("/ss/2.png", result.attachments)
+        self.assertIn("/ct/a.pdf", result.attachments)
 
     def test_migrate_renames_json_to_bak(self):
         self._write_json([self._base_record(file="a.pdf", invoice_no="111")])
