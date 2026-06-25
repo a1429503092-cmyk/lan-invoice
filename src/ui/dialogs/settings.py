@@ -204,25 +204,11 @@ class SettingsDialog(QDialog):
             self.tag_list.addItem(name)
 
     def _get_tag_templates(self) -> list[str]:
-        try:
-            with open(self._app._config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                return config.get("tag_templates", ["企业号"])
-        except (OSError, json.JSONDecodeError):
-            return ["企业号"]
+        return self._app._config.tag_templates
 
     def _save_tag_templates(self, templates: list[str]):
-        try:
-            config = {}
-            if os.path.exists(self._app._config_file):
-                with open(self._app._config_file, "r", encoding="utf-8") as f:
-                    config = json.load(f)
-            config["tag_templates"] = templates
-            os.makedirs(os.path.dirname(self._app._config_file), exist_ok=True)
-            with open(self._app._config_file, "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
+        self._app._config.tag_templates = templates
+        self._app._config.save()
 
     def _add_tag_template(self):
         name = self.edit_tag_name.text().strip()
@@ -268,8 +254,11 @@ class SettingsDialog(QDialog):
 
     def _data_dir_has_content(self, dirpath: str) -> bool:
         """检查目录是否已有数据内容"""
-        data_file = os.path.join(dirpath, "invoices_data.json")
-        if os.path.exists(data_file) and os.path.getsize(data_file) > 0:
+        db_file = os.path.join(dirpath, "invoices.db")
+        json_file = os.path.join(dirpath, "invoices_data.json")
+        if os.path.exists(db_file) and os.path.getsize(db_file) > 0:
+            return True
+        if os.path.exists(json_file) and os.path.getsize(json_file) > 0:
             return True
         screenshots_dir = os.path.join(dirpath, "screenshots")
         if os.path.isdir(screenshots_dir) and os.listdir(screenshots_dir):
@@ -300,9 +289,9 @@ class SettingsDialog(QDialog):
 
             if os.path.exists(old_data_file):
                 try:
-                    shutil.copy2(old_data_file, os.path.join(new_dir, "invoices_data.json"))
+                    shutil.copy2(old_data_file, os.path.join(new_dir, "invoices.db"))
                 except Exception as e:
-                    errors.append(f"invoices_data.json: {e}")
+                    errors.append(f"invoices.db: {e}")
 
             for src_dir, sub in [(old_screenshot_dir, "screenshots"), (old_contract_dir, "contracts"), (old_inv_dir, "invoices")]:
                 if src_dir and os.path.isdir(src_dir):
@@ -322,7 +311,7 @@ class SettingsDialog(QDialog):
 
         # 更新路径
         self._app._data_dir = new_dir
-        self._app._data_file = os.path.join(new_dir, "invoices_data.json")
+        self._app._data_file = os.path.join(new_dir, "invoices.db")
         self._app._screenshot_dir = os.path.join(new_dir, "screenshots")
         self._app._contract_dir = os.path.join(new_dir, "contracts")
         self._app._attachment_dir = new_dir
@@ -332,12 +321,17 @@ class SettingsDialog(QDialog):
 
         # 更新 Service
         from services.invoice_service import InvoiceService
-        from repository import InvoiceRepository
-        self._app._repo = InvoiceRepository(self._app._data_file)
-        self._app._svc = InvoiceService(self._app._repo, self._app._attachment_dir,
+        from database import Database
+        self._app._db = Database(self._app._data_file)
+        # 迁移新目录下的旧 JSON（如果有）
+        json_path = os.path.join(new_dir, "invoices_data.json")
+        if os.path.exists(json_path):
+            self._app._db.migrate_from_json(json_path)
+        self._app._svc = InvoiceService(self._app._db, self._app._attachment_dir,
                                          os.path.join(new_dir, "invoices"))
 
-        self._app._save_config_dir(new_dir)
+        self._app._config.data_dir = new_dir
+        self._app._config.save()
 
         # 重新加载
         self._app.records.clear()
@@ -410,7 +404,7 @@ class SettingsDialog(QDialog):
         if os.path.exists(bat_src):
             items.append(("file", bat_src, os.path.join(dst_dir, "启动.bat")))
         if os.path.exists(self._app._data_file):
-            items.append(("file", self._app._data_file, os.path.join(dst_dir, "invoices_data.json")))
+            items.append(("file", self._app._data_file, os.path.join(dst_dir, "invoices.db")))
         if os.path.isdir(self._app._screenshot_dir):
             items.append(("dir", self._app._screenshot_dir, os.path.join(dst_dir, "screenshots")))
         if os.path.isdir(self._app._contract_dir):

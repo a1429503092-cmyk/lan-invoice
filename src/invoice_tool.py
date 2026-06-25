@@ -31,7 +31,9 @@ from worker import ParseWorker
 from filters import (record_matches_filter, get_available_years,
                      get_available_inv_types, get_available_sellers)
 from models import Invoice
-from repository import InvoiceRepository
+from database import Database
+from backup import BackupService
+from config_manager import ConfigManager
 from utils import safe_float
 from services.invoice_service import InvoiceService
 from ui.icons import get as get_icon
@@ -68,12 +70,12 @@ class InvoiceApp(QMainWindow):
 
         # 配置文件路径：%APPDATA%\lan-invoice\config.json
         appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
-        self._config_file = os.path.join(appdata, 'lan-invoice', 'config.json')
-        self._tag_templates = self._load_tag_templates()
-        
-        # 先读取配置文件获取数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
-        self._data_dir = self._load_config_dir()
-        self._data_file      = os.path.join(self._data_dir, "invoices_data.json")
+        self._config = ConfigManager(os.path.join(appdata, 'lan-invoice', 'config.json'))
+        self._tag_templates = self._config.tag_templates
+
+        # 读取/初始化数据目录（直接存储 _data_dir，不再嵌套 data 子目录）
+        self._data_dir = self._init_data_dir()
+        self._data_file      = os.path.join(self._data_dir, "invoices.db")
         self._attachment_dir = self._data_dir
         self._screenshot_dir = os.path.join(self._data_dir, "screenshots")
         self._contract_dir   = os.path.join(self._data_dir, "contracts")
@@ -81,8 +83,12 @@ class InvoiceApp(QMainWindow):
         os.makedirs(self._screenshot_dir, exist_ok=True)
         os.makedirs(self._contract_dir,   exist_ok=True)
 
-        self._repo = InvoiceRepository(self._data_file)
-        self._svc  = InvoiceService(self._repo, self._attachment_dir,
+        # SQLite + 备份
+        self._db = Database(self._data_file)
+        self._backup = BackupService()
+        self._init_storage()
+
+        self._svc  = InvoiceService(self._db, self._attachment_dir,
                                      os.path.join(self._data_dir, "invoices"))
 
         self._filter_year        = None
@@ -112,6 +118,39 @@ class InvoiceApp(QMainWindow):
 
     # ── 记录辅助方法 ────────────────────────────
 
+    def _init_data_dir(self):
+        """确定数据目录：优先用配置中保存的路径，否则用默认"""
+        configured = self._config.data_dir
+        if configured and os.path.isdir(configured):
+            return configured
+        default_dir = os.path.join(os.path.dirname(self._config.path), "data")
+        # 旧版配置迁移：项目根目录 config.json → %APPDATA%\lan-invoice\
+        old_config = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config.json"
+        )
+        if os.path.exists(old_config) and not os.path.exists(self._config.path):
+            try:
+                os.makedirs(os.path.dirname(self._config.path), exist_ok=True)
+                shutil.copy2(old_config, self._config.path)
+            except OSError:
+                pass
+        return default_dir
+
+    def _init_storage(self):
+        """初始化存储：迁移旧 JSON → 完整性检查 → 自动恢复"""
+        json_path = os.path.join(self._data_dir, "invoices_data.json")
+        if os.path.exists(json_path):
+            migrated = self._db.migrate_from_json(json_path)
+            if migrated > 0:
+                log.info("已从 JSON 迁移 %d 条记录到 SQLite", migrated)
+        if not self._db.integrity_check():
+            log.warning("数据库完整性检查失败，尝试从备份恢复…")
+            if self._backup.restore(self._db.data_file):
+                log.info("已从备份恢复数据库")
+            else:
+                log.warning("无可用备份，将使用空数据库")
+
     def _init_record_fields(self, data):
         """统一初始化记录字段默认值；红票金额转负数"""
         if isinstance(data, Invoice):
@@ -135,7 +174,8 @@ class InvoiceApp(QMainWindow):
         if not inv_no:
             return None
         for i, r in enumerate(self.records):
-            if r.get("invoice_no") == inv_no:
+            no = r.invoice_no if isinstance(r, Invoice) else r.get("invoice_no", "")
+            if no == inv_no:
                 return i
         return None
 
@@ -761,9 +801,11 @@ class InvoiceApp(QMainWindow):
     def _save_data(self):
         try:
             self._sync_records_from_table()
-            self._repo.save(self.records)
+            self._db.save(self.records)
+            self._backup.backup(self._db.data_file)
+            self._backup.cleanup(keep_days=30)
             log.debug("数据已保存: %d 条", len(self.records))
-        except (OSError, IOError) as e:
+        except (OSError, IOError, Exception) as e:
             log.error("数据保存失败: %s", e)
             self.status.showMessage(f"数据保存失败: {e}")
 
@@ -782,13 +824,16 @@ class InvoiceApp(QMainWindow):
 
             bk_item = self.table.item(i, self._current_col_idx["备注"])
             if bk_item and bk_item.text() != "✓":
-                rec["remark"] = bk_item.text()
+                if isinstance(rec, Invoice):
+                    rec.remark = bk_item.text()
+                else:
+                    rec["remark"] = bk_item.text()
 
             # Save tag values from tag columns
-            if isinstance(rec, dict):
-                tags = rec.setdefault("tags", {})
-            else:
+            if isinstance(rec, Invoice):
                 tags = rec.tags
+            else:
+                tags = rec.setdefault("tags", {})
             for tag_name in self._tag_templates:
                 tag_col = self._current_col_idx.get(tag_name, -1)
                 if tag_col >= 0:
@@ -796,56 +841,12 @@ class InvoiceApp(QMainWindow):
                     if tag_item:
                         tags[tag_name] = tag_item.text()
 
-    def _load_config_dir(self):
-        default_dir = os.path.join(os.path.dirname(self._config_file), "data")
-        # 旧版配置迁移：项目根目录 config.json → %APPDATA%\lan-invoice\
-        old_config = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "config.json"
-        )
-        if os.path.exists(old_config) and not os.path.exists(self._config_file):
-            try:
-                os.makedirs(os.path.dirname(self._config_file), exist_ok=True)
-                shutil.copy2(old_config, self._config_file)
-            except OSError:
-                pass
-        if not os.path.exists(self._config_file):
-            return default_dir
-        try:
-            with open(self._config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                data_dir = config.get("data_dir", "")
-                if data_dir and os.path.isdir(data_dir):
-                    return data_dir
-        except (OSError, json.JSONDecodeError):
-            pass
-        return default_dir
-
-    def _save_config_dir(self, data_dir):
-        try:
-            os.makedirs(os.path.dirname(self._config_file), exist_ok=True)
-            with open(self._config_file, "w", encoding="utf-8") as f:
-                json.dump({"data_dir": data_dir}, f, ensure_ascii=False, indent=2)
-        except OSError:
-            pass
-
-    # ── 标签模板 ────────────────────────────────
-
-    def _load_tag_templates(self):
-        """从 config.json 读取标签模板列表"""
-        try:
-            with open(self._config_file, "r", encoding="utf-8") as f:
-                config = json.load(f)
-                return config.get("tag_templates", ["企业号"])
-        except (OSError, json.JSONDecodeError):
-            return ["企业号"]
-
     def _get_effective_columns(self):
         """返回固定列 + 标签列"""
         return COLUMNS[:10] + self._tag_templates + COLUMNS[10:]
 
     def _load_data(self):
-        invoices = self._repo.load()
+        invoices = self._db.load()
         if not invoices:
             log.info("无历史数据，初始化空列表")
             return
@@ -855,12 +856,13 @@ class InvoiceApp(QMainWindow):
             self._init_record_fields(inv)
         # Migrate old "company" field to tags
         for inv in self.records:
-            company = inv.get("company", "")
+            company = inv.company if isinstance(inv, Invoice) else inv.get("company", "")
             if company:
-                tags = inv.get("tags", {})
+                tags = inv.tags if isinstance(inv, Invoice) else inv.get("tags", {})
                 if "企业号" not in tags:
                     tags["企业号"] = company
-                inv["tags"] = tags
+                if not isinstance(inv, Invoice):
+                    inv["tags"] = tags
         self._rebuild_table()
         self._refresh_filter_combos()
         self._save_locked = False
