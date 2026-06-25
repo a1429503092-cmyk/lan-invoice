@@ -53,3 +53,9 @@ out.txt
 
 # 本地数据目录配置（含绝对路径）
 config.json
+
+# Git Worktree 临时目录
+.claude/worktrees/
+
+# 脚本缓存
+scripts/.cache/
