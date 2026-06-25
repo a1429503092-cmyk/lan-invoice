@@ -152,6 +152,7 @@ class InvoiceApp(QMainWindow):
         # 兼容旧 dict（逐步淘汰）
         for field in ("pdf_path", "invoice_type", "seller_name", "remark"):
             data.setdefault(field, "")
+        data.setdefault("attachments", [])
         data.setdefault("tags", {})
         data.setdefault("is_red", False)
         if data.get("is_red"):

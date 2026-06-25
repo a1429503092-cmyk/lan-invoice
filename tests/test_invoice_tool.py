@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from utils import copy_file_to_dir as _copy_file_to_dir, safe_float
-from invoice_tool import InvoiceApp, COL_IDX, IMG_EXTS, CONTRACT_EXTS, COLUMNS
+from invoice_tool import InvoiceApp, COL_IDX, IMG_EXTS, ATTACH_EXTS, COLUMNS
 from models import Invoice
 from PyQt5.QtWidgets import QApplication, QHBoxLayout
 from PyQt5.QtCore import Qt
@@ -218,8 +218,7 @@ class TestInitRecordFields(unittest.TestCase):
         self.assertEqual(data["invoice_type"], "")
         self.assertEqual(data["seller_name"], "")
         self.assertEqual(data["remark"], "")
-        self.assertEqual(data["screenshots"], [])
-        self.assertEqual(data["contracts"], [])
+        self.assertEqual(data["attachments"], [])
         self.assertFalse(data["is_red"])
 
     def test_preserves_existing_values(self):
@@ -518,8 +517,8 @@ class TestDragDropRouting(unittest.TestCase):
         doc = self._make_doc("contract.docx")
         import os as _os
         ext = _os.path.splitext(doc)[1].lower()
-        from invoice_tool import CONTRACT_EXTS
-        self.assertIn(ext, CONTRACT_EXTS)
+        from invoice_tool import ATTACH_EXTS
+        self.assertIn(ext, ATTACH_EXTS)
 
     def test_mixed_files_separated_correctly(self):
         """混合拖入时PDF和图片/文档正确分离"""
@@ -613,35 +612,32 @@ class TestAttachmentColumn(unittest.TestCase):
         self.assertIsInstance(inv.attachments, list)
 
     def test_attachments_from_old_screenshots(self):
-        """旧 screenshots 字段可迁移到 attachments"""
+        """旧 screenshots 字段通过 from_dict 迁移到 attachments"""
         from models import Invoice
-        inv = Invoice(screenshots=["/old/ss/1.png"], contracts=[])
-        # 模拟迁移逻辑
-        if inv.screenshots:
-            inv.attachments.extend(inv.screenshots)
+        inv = Invoice.from_dict({
+            "file": "old.pdf", "invoice_no": "111",
+            "screenshots": ["/old/ss/1.png"], "contracts": [],
+        })
         self.assertIn("/old/ss/1.png", inv.attachments)
 
     def test_attachments_from_old_contracts(self):
-        """旧 contracts 字段可迁移到 attachments"""
+        """旧 contracts 字段通过 from_dict 迁移到 attachments"""
         from models import Invoice
-        inv = Invoice(screenshots=[], contracts=["/old/ct/1.pdf"])
-        if inv.contracts:
-            inv.attachments.extend(inv.contracts)
+        inv = Invoice.from_dict({
+            "file": "old.pdf", "invoice_no": "222",
+            "screenshots": [], "contracts": ["/old/ct/1.pdf"],
+        })
         self.assertIn("/old/ct/1.pdf", inv.attachments)
 
     def test_attachments_merge_dedup(self):
         """合并附件时去重"""
         from models import Invoice
-        inv = Invoice(
-            screenshots=["/a.png", "/b.png"],
-            contracts=["/a.png", "/c.pdf"],
-            attachments=["/a.png"]
-        )
-        existing = set(inv.attachments)
-        for p in inv.screenshots + inv.contracts:
-            if p not in existing:
-                inv.attachments.append(p)
-                existing.add(p)
+        inv = Invoice.from_dict({
+            "file": "old.pdf", "invoice_no": "333",
+            "screenshots": ["/a.png", "/b.png"],
+            "contracts": ["/a.png", "/c.pdf"],
+            "attachments": ["/a.png"],
+        })
         # /a.png should only appear once
         self.assertEqual(inv.attachments.count("/a.png"), 1)
         self.assertEqual(len(inv.attachments), 3)
