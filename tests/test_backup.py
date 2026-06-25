@@ -95,8 +95,10 @@ class TestBackup(unittest.TestCase):
         svc.backup(self.db_path)
         backup_dir = os.path.join(self.backup_root, ".lan-invoice-backup")
         self.assertEqual(len(os.listdir(backup_dir)), 1)
+        # 第二次备份（新实例重置防抖计时器，模拟不同会话的写入）
+        svc2 = BackupService(roots=[self.backup_root])
         time.sleep(1.1)
-        svc.backup(self.db_path)
+        svc2.backup(self.db_path)
         files = os.listdir(backup_dir)
         self.assertGreaterEqual(len(files), 2)
 

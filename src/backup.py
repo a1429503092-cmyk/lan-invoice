@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""多分区隐藏备份服务 — 防抖复制、完整性检查、自动恢复"""
+"""多分区隐藏备份服务 — 自动扫描、防抖复制、完整性验证、自动恢复"""
 
 import os
 import re
 import shutil
+import sqlite3
 import time
 from datetime import datetime
 
@@ -13,34 +14,53 @@ log = getLogger(__name__)
 
 _BACKUP_DIR_NAME = ".lan-invoice-backup"
 _BACKUP_PATTERN = re.compile(r"^invoices_(\d{8}_\d{6})\.db$")
+_DEBOUNCE_SECONDS = 5  # 两次备份最小间隔
 
 
 class BackupService:
     """在多个分区创建隐藏备份，支持防抖、恢复和清理"""
 
     def __init__(self, roots: list[str] | None = None):
-        self._roots = roots or self._detect_partitions()
+        self._roots = roots
+        self._roots_cache: list[str] | None = None
+        self._last_backup_time: float = 0
+        self._hidden_set: set[str] = set()
 
     # ── 分区探测 ──────────────────────────────
 
+    def _get_roots(self) -> list[str]:
+        if self._roots is not None:
+            return self._roots
+        if self._roots_cache is not None:
+            return self._roots_cache
+        self._roots_cache = self._detect_local_fixed_drives()
+        return self._roots_cache
+
     @staticmethod
-    def _detect_partitions() -> list[str]:
+    def _detect_local_fixed_drives() -> list[str]:
         import sys
         if sys.platform != "win32":
             return [os.path.expanduser("~")]
         roots = []
         import string
+        import ctypes
+        DRIVE_FIXED = 3
         for letter in string.ascii_uppercase:
             p = f"{letter}:\\"
-            if os.path.exists(p):
-                roots.append(p)
+            try:
+                # 仅选固定磁盘（本地硬盘），跳过网络/可移动/光驱
+                dt = ctypes.windll.kernel32.GetDriveTypeW(p)
+                if dt == DRIVE_FIXED:
+                    roots.append(p)
+            except Exception:
+                pass
         return roots
 
     # ── 备份目录 ──────────────────────────────
 
     def get_backup_dirs(self) -> list[str]:
         dirs = []
-        for root in self._roots:
+        for root in self._get_roots():
             if not os.path.exists(root):
                 continue
             d = os.path.join(root, _BACKUP_DIR_NAME)
@@ -48,11 +68,13 @@ class BackupService:
                 os.makedirs(d, exist_ok=True)
             except OSError:
                 continue
-            try:
-                import ctypes
-                ctypes.windll.kernel32.SetFileAttributesW(d, 2)
-            except Exception:
-                pass
+            if d not in self._hidden_set:
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.SetFileAttributesW(d, 2)
+                except Exception:
+                    pass
+                self._hidden_set.add(d)
             dirs.append(d)
         return dirs
 
@@ -62,6 +84,10 @@ class BackupService:
         if not os.path.exists(db_path):
             log.warning("备份跳过：源文件不存在 %s", db_path)
             return 0
+        now = time.time()
+        if now - self._last_backup_time < _DEBOUNCE_SECONDS:
+            return 0
+        self._last_backup_time = now
         dirs = self.get_backup_dirs()
         base = os.path.splitext(os.path.basename(db_path))[0]
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -75,17 +101,16 @@ class BackupService:
             except OSError as e:
                 log.warning("备份失败: %s → %s | %s", db_path, dst, e)
         if count > 0:
-            log.info("备份完成: %d 份 → %s", count,
-                     [os.path.join(d, fname) for d in dirs])
+            log.info("备份完成: %d 份", count)
         return count
 
     # ── 恢复 ──────────────────────────────────
 
     def restore(self, db_path: str) -> bool:
         dirs = self.get_backup_dirs()
-        latest = self._find_latest_backup(dirs)
+        latest = self._find_latest_valid_backup(dirs)
         if not latest:
-            log.warning("无可用备份，无法恢复: %s", db_path)
+            log.warning("无有效备份，无法恢复: %s", db_path)
             return False
         try:
             os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -96,7 +121,7 @@ class BackupService:
             log.error("恢复失败: %s → %s | %s", latest, db_path, e)
             return False
 
-    def _find_latest_backup(self, backup_dirs: list[str]) -> str | None:
+    def _find_latest_valid_backup(self, backup_dirs: list[str]) -> str | None:
         candidates = []
         for d in backup_dirs:
             if not os.path.isdir(d):
@@ -106,7 +131,19 @@ class BackupService:
                 if m:
                     candidates.append((m.group(1), os.path.join(d, f)))
         candidates.sort(key=lambda x: x[0], reverse=True)
-        return candidates[0][1] if candidates else None
+        for _, fp in candidates:
+            if self._check_integrity(fp):
+                return fp
+        return None
+
+    @staticmethod
+    def _check_integrity(db_path: str) -> bool:
+        try:
+            with sqlite3.connect(db_path) as conn:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                return result[0] == "ok"
+        except sqlite3.Error:
+            return False
 
     # ── 清理 ──────────────────────────────────
 

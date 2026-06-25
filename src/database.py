@@ -10,6 +10,32 @@ from logger import getLogger
 
 log = getLogger(__name__)
 
+_DDL = """\
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file TEXT DEFAULT '',
+    pdf_path TEXT DEFAULT '',
+    company TEXT DEFAULT '',
+    invoice_type TEXT DEFAULT '',
+    buyer_name TEXT DEFAULT '',
+    buyer_tax_id TEXT DEFAULT '',
+    seller_name TEXT DEFAULT '',
+    amount TEXT DEFAULT '',
+    tax_rate TEXT DEFAULT '',
+    tax_amount TEXT DEFAULT '',
+    total TEXT DEFAULT '',
+    invoice_no TEXT DEFAULT '',
+    invoice_date TEXT DEFAULT '',
+    is_red INTEGER DEFAULT 0,
+    screenshots TEXT DEFAULT '[]',
+    contracts TEXT DEFAULT '[]',
+    tags TEXT DEFAULT '{}',
+    attachments TEXT DEFAULT '[]',
+    remark TEXT DEFAULT '',
+    error TEXT DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+)"""
+
 
 class Database:
     """SQLite 存储，接口与 InvoiceRepository 一致"""
@@ -25,71 +51,23 @@ class Database:
 
     def _init_schema(self):
         try:
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA foreign_keys=ON")
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS invoices (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        file TEXT DEFAULT '',
-                        pdf_path TEXT DEFAULT '',
-                        company TEXT DEFAULT '',
-                        invoice_type TEXT DEFAULT '',
-                        buyer_name TEXT DEFAULT '',
-                        buyer_tax_id TEXT DEFAULT '',
-                        seller_name TEXT DEFAULT '',
-                        amount TEXT DEFAULT '',
-                        tax_rate TEXT DEFAULT '',
-                        tax_amount TEXT DEFAULT '',
-                        total TEXT DEFAULT '',
-                        invoice_no TEXT UNIQUE DEFAULT '',
-                        invoice_date TEXT DEFAULT '',
-                        is_red INTEGER DEFAULT 0,
-                        screenshots TEXT DEFAULT '[]',
-                        contracts TEXT DEFAULT '[]',
-                        tags TEXT DEFAULT '{}',
-                        attachments TEXT DEFAULT '[]',
-                        remark TEXT DEFAULT '',
-                        error TEXT DEFAULT '',
-                        updated_at TEXT DEFAULT (datetime('now','localtime'))
-                    )
-                """)
-                conn.commit()
+            self._try_init_schema()
         except sqlite3.DatabaseError:
-            # 文件损坏时截断重建
             log.warning("数据库文件损坏，重建: %s", self._db_path)
-            # 截断为 0 字节（避免 Windows 文件锁导致的 remove 后重连失败）
-            with open(self._db_path, "wb"):
-                pass
-            with sqlite3.connect(self._db_path) as conn:
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS invoices (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        file TEXT DEFAULT '',
-                        pdf_path TEXT DEFAULT '',
-                        company TEXT DEFAULT '',
-                        invoice_type TEXT DEFAULT '',
-                        buyer_name TEXT DEFAULT '',
-                        buyer_tax_id TEXT DEFAULT '',
-                        seller_name TEXT DEFAULT '',
-                        amount TEXT DEFAULT '',
-                        tax_rate TEXT DEFAULT '',
-                        tax_amount TEXT DEFAULT '',
-                        total TEXT DEFAULT '',
-                        invoice_no TEXT UNIQUE DEFAULT '',
-                        invoice_date TEXT DEFAULT '',
-                        is_red INTEGER DEFAULT 0,
-                        screenshots TEXT DEFAULT '[]',
-                        contracts TEXT DEFAULT '[]',
-                        tags TEXT DEFAULT '{}',
-                        attachments TEXT DEFAULT '[]',
-                        remark TEXT DEFAULT '',
-                        error TEXT DEFAULT '',
-                        updated_at TEXT DEFAULT (datetime('now','localtime'))
-                    )
-                """)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.commit()
+            try:
+                with open(self._db_path, "wb"):
+                    pass
+                self._try_init_schema()
+            except (OSError, sqlite3.DatabaseError) as e:
+                log.critical("数据库重建失败: %s | %s", self._db_path, e)
+                raise
+
+    def _try_init_schema(self):
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute(_DDL)
+            conn.commit()
 
     # ── 查询 ──────────────────────────────────
 
@@ -147,31 +125,36 @@ class Database:
     # ── 保存 ──────────────────────────────────
 
     def save(self, invoices: list[Invoice]) -> None:
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute("DELETE FROM invoices")
-            for inv in invoices:
-                conn.execute("""
-                    INSERT INTO invoices (
-                        file, pdf_path, company, invoice_type,
-                        buyer_name, buyer_tax_id, seller_name,
-                        amount, tax_rate, tax_amount, total,
-                        invoice_no, invoice_date, is_red,
-                        screenshots, contracts, tags, attachments,
-                        remark, error
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    inv.file, inv.pdf_path, inv.company, inv.invoice_type,
-                    inv.buyer_name, inv.buyer_tax_id, inv.seller_name,
-                    inv.amount, inv.tax_rate, inv.tax_amount, inv.total,
-                    inv.invoice_no, inv.invoice_date, int(inv.is_red),
-                    json.dumps(inv.screenshots, ensure_ascii=False),
-                    json.dumps(inv.contracts, ensure_ascii=False),
-                    json.dumps(inv.tags, ensure_ascii=False),
-                    json.dumps(inv.attachments, ensure_ascii=False),
-                    inv.remark, inv.error,
-                ))
-            conn.commit()
-        log.debug("数据已保存: %d 条 → %s", len(invoices), self._db_path)
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("DELETE FROM invoices")
+                for inv in invoices:
+                    conn.execute("""
+                        INSERT INTO invoices (
+                            file, pdf_path, company, invoice_type,
+                            buyer_name, buyer_tax_id, seller_name,
+                            amount, tax_rate, tax_amount, total,
+                            invoice_no, invoice_date, is_red,
+                            screenshots, contracts, tags, attachments,
+                            remark, error
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        inv.file, inv.pdf_path, inv.company, inv.invoice_type,
+                        inv.buyer_name, inv.buyer_tax_id, inv.seller_name,
+                        inv.amount, inv.tax_rate, inv.tax_amount, inv.total,
+                        inv.invoice_no, inv.invoice_date, int(inv.is_red),
+                        json.dumps(inv.screenshots, ensure_ascii=False),
+                        json.dumps(inv.contracts, ensure_ascii=False),
+                        json.dumps(inv.tags, ensure_ascii=False),
+                        json.dumps(inv.attachments, ensure_ascii=False),
+                        inv.remark, inv.error,
+                    ))
+                conn.commit()
+        except sqlite3.Error as e:
+            log.critical("数据保存失败: %s | %s (数据未写入)", self._db_path, e)
+            raise
+        else:
+            log.debug("数据已保存: %d 条 → %s", len(invoices), self._db_path)
 
     # ── 删除 ──────────────────────────────────
 
@@ -209,7 +192,7 @@ class Database:
             invoices = [Invoice.from_dict(d) for d in raw]
             self.save(invoices)
             bak = json_path + ".bak"
-            os.rename(json_path, bak)
+            os.replace(json_path, bak)
             log.info("JSON 迁移完成: %d 条 → %s (备份: %s)",
                      len(invoices), self._db_path, bak)
             return len(invoices)
