@@ -1,6 +1,5 @@
 import pdfplumber
 import sys
-import os
 
 sys.stdout.reconfigure(encoding='utf-8')
 

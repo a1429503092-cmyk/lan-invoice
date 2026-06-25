@@ -4,7 +4,7 @@
 import sys
 import os
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -79,7 +79,8 @@ class TestParseWorker(unittest.TestCase):
         self.assertTrue(self.finished)
 
     def test_worker_with_data_dir(self):
-        import tempfile, shutil
+        import tempfile
+        import shutil
         tmp = tempfile.mkdtemp()
         try:
             with patch('worker.parse_invoice_pdf') as mock_parse:

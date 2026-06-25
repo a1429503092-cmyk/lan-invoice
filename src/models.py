@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """发票数据模型 — dataclass 替代裸 dict，提供类型安全和序列化"""
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 
 
 @dataclass

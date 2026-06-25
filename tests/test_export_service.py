@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """export_service 模块单元测试"""
-import sys, os, unittest, tempfile, shutil
+import sys
+import os
+import unittest
+import tempfile
+import shutil
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import openpyxl

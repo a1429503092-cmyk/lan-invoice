@@ -441,7 +441,7 @@ class TestDragDropRouting(unittest.TestCase):
         cls._app = QApplication.instance() or QApplication(sys.argv)
 
     def setUp(self):
-        import tempfile, shutil
+        import tempfile
         self.tmp = tempfile.mkdtemp()
         self.data_dir = os.path.join(self.tmp, "data")
         os.makedirs(os.path.join(self.data_dir, "invoices"))
@@ -493,7 +493,6 @@ class TestDragDropRouting(unittest.TestCase):
     def test_pdf_always_classified_as_invoice(self):
         """PDF文件始终分类为发票，不依赖选中状态"""
         from PyQt5.QtCore import QUrl, QMimeData
-        from PyQt5.QtGui import QDragEnterEvent
         pdf = self._make_pdf("invoice.pdf")
         # 构造拖入事件
         mime = QMimeData()
@@ -509,7 +508,6 @@ class TestDragDropRouting(unittest.TestCase):
         img = self._make_img("screenshot.png")
         import os as _os
         ext = _os.path.splitext(img)[1].lower()
-        from invoice_tool import IMG_EXTS
         self.assertIn(ext, IMG_EXTS)
 
     def test_docx_classified_as_attachment(self):
@@ -517,7 +515,6 @@ class TestDragDropRouting(unittest.TestCase):
         doc = self._make_doc("contract.docx")
         import os as _os
         ext = _os.path.splitext(doc)[1].lower()
-        from invoice_tool import ATTACH_EXTS
         self.assertIn(ext, ATTACH_EXTS)
 
     def test_mixed_files_separated_correctly(self):
@@ -644,7 +641,6 @@ class TestAttachmentColumn(unittest.TestCase):
 
     def test_column_list_has_attachment_not_screenshots(self):
         """列定义中只有附件，没有截图和合同"""
-        from invoice_tool import COLUMNS
         self.assertIn("附件", COLUMNS)
         self.assertNotIn("付款截图", COLUMNS)
         self.assertNotIn("合同", COLUMNS)

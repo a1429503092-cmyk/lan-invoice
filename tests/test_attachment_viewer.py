@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """统一附件预览对话框测试"""
-import sys, os, unittest, tempfile, shutil
+import sys
+import os
+import unittest
+import tempfile
+import shutil
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

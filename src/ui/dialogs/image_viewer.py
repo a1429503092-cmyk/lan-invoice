@@ -16,7 +16,7 @@ from PyQt5.QtGui import QPixmap, QIcon
 from logger import getLogger
 log = getLogger(__name__)
 
-from ui.theme import ACCENT, RED, GREEN, DARK_SURFACE, DARK_BG, DARK_TEXT, DARK_TEXT_DIM
+from ui.theme import ACCENT, RED, GREEN, DARK_SURFACE, DARK_BG, DARK_TEXT
 
 
 THUMB_SIZE = 120

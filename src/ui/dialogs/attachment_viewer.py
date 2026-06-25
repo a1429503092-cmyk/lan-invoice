@@ -17,7 +17,7 @@ from PyQt5.QtGui import QDesktopServices, QPixmap, QImage
 from logger import getLogger
 log = getLogger(__name__)
 
-from ui.theme import ACCENT, RED, GREEN, DARK_SURFACE, DARK_BG, DARK_TEXT, DARK_TEXT_DIM
+from ui.theme import ACCENT, RED, DARK_BG, DARK_TEXT
 from ui.dialogs.image_viewer import ImageViewerDialog
 from ui.dialogs.pdf_viewer import PdfViewerDialog
 
@@ -212,7 +212,6 @@ class AttachmentViewerDialog(QDialog):
             btn.setCursor(Qt.PointingHandCursor)
 
     def _populate_list(self):
-        from PyQt5.QtGui import QIcon
         for path in self.attachment_paths:
             name = os.path.basename(path)
             cat = self._classify(path)

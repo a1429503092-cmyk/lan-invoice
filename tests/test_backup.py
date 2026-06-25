@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """backup 模块单元测试"""
-import sys, os, unittest, tempfile, shutil, time
+import sys
+import os
+import unittest
+import tempfile
+import shutil
+import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from backup import BackupService

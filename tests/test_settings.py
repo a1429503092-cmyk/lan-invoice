@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 """设置对话框测试 — 标签模板管理 + 目录切换安全化"""
 
-import sys, os, unittest, tempfile, shutil, json
-from unittest.mock import patch, MagicMock
+import sys
+import os
+import unittest
+import tempfile
+import shutil
+import json
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))

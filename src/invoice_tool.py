@@ -7,7 +7,6 @@
 import sys
 import os
 import re
-import json
 import shutil
 from datetime import datetime
 
@@ -16,10 +15,10 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QHeaderView, QStatusBar, QFrame,
     QProgressBar, QAbstractItemView, QDialog,
-    QComboBox, QMenu, QInputDialog, QSizePolicy
+    QComboBox, QMenu, QSizePolicy
 )
 from PyQt5 import QtCore
-from PyQt5.QtCore import Qt, QTimer, QMimeData, QUrl, QEvent
+from PyQt5.QtCore import Qt, QTimer, QUrl, QEvent
 from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QFontDatabase
 
 from dialogs import SettingsDialog, DeleteConfirmDialog
@@ -34,9 +33,9 @@ from utils import safe_float
 from services.invoice_service import InvoiceService
 from ui.icons import get as get_icon
 from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
-                       ACCENT, ACCENT_LIGHT, ACCENT_BORDER, RED, GREEN, WHITE,
+                       ACCENT, ACCENT_LIGHT, RED, WHITE,
                        TEXT, TEXT_SEC, TEXT_DIM,
-                       BORDER, BORDER_LIGHT, MONO_FONT, FS_SM, FS, FS_LG, FS_XL)
+                       BORDER, BORDER_LIGHT, MONO_FONT, FS_SM, FS)
 from version import APP_VERSION
 from logger import setup_logging, shutdown_logging, getLogger
 log = getLogger(__name__)

@@ -14,7 +14,7 @@ from PyQt5.QtGui import QColor, QDesktopServices
 from logger import getLogger
 log = getLogger(__name__)
 
-from ui.theme import TEXT, TEXT_SEC, TEXT_DIM, RED, ACCENT_LIGHT, BG_ALT, BORDER
+from ui.theme import TEXT, TEXT_DIM, RED, ACCENT_LIGHT, BG_ALT, BORDER
 
 
 class ContractManagerDialog(QDialog):

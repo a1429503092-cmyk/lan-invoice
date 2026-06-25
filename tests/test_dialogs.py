@@ -4,13 +4,10 @@
 import sys
 import os
 import unittest
-import tempfile
-import shutil
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from PyQt5.QtWidgets import QApplication, QDialog
-from PyQt5.QtCore import Qt
 
 from dialogs import DeleteConfirmDialog
 

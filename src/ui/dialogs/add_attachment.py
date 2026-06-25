@@ -5,7 +5,7 @@ import os
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFileDialog, QListWidget, QListWidgetItem, QAbstractItemView, QFrame
+    QFileDialog, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, pyqtSignal
@@ -133,7 +133,7 @@ class AddAttachmentDialog(QDialog):
         btn_bar.addWidget(self.btn_cancel)
         layout.addLayout(btn_bar)
 
-        self.setStyleSheet(f"QDialog {{ background:#1E1E1E; }}")
+        self.setStyleSheet("QDialog { background:#1E1E1E; }")
         for btn in self.findChildren(QPushButton):
             btn.setCursor(Qt.PointingHandCursor)
 

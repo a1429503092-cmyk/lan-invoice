@@ -174,7 +174,7 @@ class TestInvoiceService(unittest.TestCase):
         name2 = InvoiceService.namer("/path/to/img", "INV001")
         self.assertTrue(name2.endswith(".dat"))
 
-    def test_namer(self):
+    def test_namer_with_chinese_filename(self):
         name = InvoiceService.namer("/path/to/合同文件.pdf", "INV002")
         self.assertTrue(name.startswith("INV002_合同文件_"))
         self.assertTrue(name.endswith(".pdf"))

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Excel 导出服务"""
 
-from datetime import datetime
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side

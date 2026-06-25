@@ -2,7 +2,6 @@
 """设置对话框：数据目录配置 + 软件另存 + 数据备份恢复"""
 
 import os
-import json
 import shutil
 import zipfile
 
@@ -16,8 +15,7 @@ from PyQt5.QtGui import QDesktopServices
 from logger import getLogger
 log = getLogger(__name__)
 
-from ui.theme import (TEXT, TEXT_SEC, TEXT_DIM, ACCENT,
-                       BG_ALT, BORDER_LIGHT, FS, FS_SM)
+from ui.theme import (TEXT, TEXT_SEC, TEXT_DIM, BG_ALT, BORDER_LIGHT)
 
 
 class SettingsDialog(QDialog):

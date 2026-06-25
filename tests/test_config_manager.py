@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """config_manager 模块单元测试"""
-import sys, os, json, unittest, tempfile, shutil
+import sys
+import os
+import json
+import unittest
+import tempfile
+import shutil
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from config_manager import ConfigManager
