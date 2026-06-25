@@ -782,8 +782,10 @@ class InvoiceApp(QMainWindow):
         if getattr(self, '_sort_column', None):
             shown = self._sort_records(shown, self._sort_column, getattr(self, '_sort_ascending', True))
         self._shown_records = shown
-        for data in shown:
-            self._insert_row(data, scroll=False)
+        # 预分配所有行（避免逐行 insertRow 的 O(n²) 开销）
+        self.table.setRowCount(len(shown))
+        for i, data in enumerate(shown):
+            self._fill_row(i, data)
         self.table.setUpdatesEnabled(True)
         self.table.verticalScrollBar().setValue(min(scroll_val, self.table.verticalScrollBar().maximum()))
         self._refresh_summary_from_list(shown)
@@ -1117,9 +1119,8 @@ class InvoiceApp(QMainWindow):
         self._init_record_fields(inv)
         self.records.append(inv)
 
-    def _insert_row(self, data: dict, scroll: bool = True):
-        row = self.table.rowCount()
-        self.table.insertRow(row)
+    def _fill_row(self, row: int, data, scroll: bool = False):
+        """向已有行索引填充数据（不调用 insertRow，调用方需预分配行数）"""
         self.table.setRowHeight(row, TABLE_ROW_HEIGHT)
 
         is_red = data.get("is_red", False)
