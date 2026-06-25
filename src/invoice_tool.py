@@ -11,9 +11,6 @@ import json
 import shutil
 from datetime import datetime
 
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
@@ -1907,91 +1904,10 @@ class InvoiceApp(QMainWindow):
         if not save_path:
             return
 
-        # 导出列：不含「附件」和「操作」
-        xl_columns = [c for c in self._get_effective_columns() if c not in ("附件", "操作")]
-
         try:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "发票归档"
-
-            header_fill  = PatternFill("solid", fgColor="1E6FBF")
-            header_font  = Font(color="FFFFFF", bold=True, size=12)
-            header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            thin   = Side(style="thin", color="AAAAAA")
-            border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-            ws.append(xl_columns)
-            for cell in ws[1]:
-                cell.fill      = header_fill
-                cell.font      = header_font
-                cell.alignment = header_align
-                cell.border    = border
-            ws.row_dimensions[1].height = 28
-
-            alt_fill     = PatternFill("solid", fgColor="EEF4FB")
-            normal_align = Alignment(horizontal="left",   vertical="center")
-            center_align = Alignment(horizontal="center", vertical="center")
-
-            field_map = {
-                "发票类型": "invoice_type", "购买方名称": "buyer_name",
-                "纳税人识别号": "buyer_tax_id", "销售方名称": "seller_name",
-                "金额(元)": "amount", "征收率": "tax_rate",
-                "税额(元)": "tax_amount", "价税合计(元)": "total",
-                "发票号码": "invoice_no", "开票日期": "invoice_date",
-            }
-            for i, rec in enumerate(export_records, 2):
-                row_data = []
-                for col_name in xl_columns:
-                    if col_name in field_map:
-                        row_data.append(rec.get(field_map[col_name], ""))
-                    elif col_name == "备注":
-                        row_data.append(rec.get("remark", "") or rec.get("error", "") or "✓")
-                    else:
-                        # Tag column
-                        tags = rec.get("tags", {})
-                        row_data.append(tags.get(col_name, ""))
-                ws.append(row_data)
-                fill = alt_fill if i % 2 == 0 else None
-                for j, cell in enumerate(ws[i]):
-                    if fill:
-                        cell.fill = fill
-                    cell.border    = border
-                    cell.alignment = center_align if j in [4, 5, 6, 7] else normal_align
-                ws.row_dimensions[i].height = 20
-
-            # 汇总行
-            ws.append([])
-            sum_row   = ws.max_row + 1
-            total_amt = sum(safe_float(r.get("amount"))     for r in export_records)
-            total_tax = sum(safe_float(r.get("tax_amount")) for r in export_records)
-            total_all = sum(safe_float(r.get("total"))      for r in export_records)
-            ws.cell(sum_row, 1, "合计")
-            ws.cell(sum_row, 5, round(total_amt, 2))
-            ws.cell(sum_row, 7, round(total_tax, 2))
-            ws.cell(sum_row, 8, round(total_all, 2))
-            sum_font = Font(bold=True, color="1E6FBF", size=12)
-            sum_fill = PatternFill("solid", fgColor="D6E4F5")
-            for cell in ws[sum_row]:
-                cell.font      = sum_font
-                cell.fill      = sum_fill
-                cell.border    = border
-                cell.alignment = center_align
-            ws.row_dimensions[sum_row].height = 24
-
-            # 动态列宽
-            base_widths = {
-                "发票类型": 16, "购买方名称": 20, "纳税人识别号": 22,
-                "销售方名称": 20, "金额(元)": 12, "征收率": 8,
-                "税额(元)": 12, "价税合计(元)": 14, "发票号码": 20,
-                "开票日期": 14, "备注": 14,
-            }
-            for i, col_name in enumerate(xl_columns, 1):
-                w = base_widths.get(col_name, 14)  # 标签列默认 14
-                ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
-
-            ws.freeze_panes = "A2"
-            wb.save(save_path)
+            from services.export_service import ExportService
+            svc = ExportService()
+            svc.export(export_records, save_path, tag_columns=self._tag_templates)
             log.info("Excel 导出成功: %s (%d 条)", save_path, len(export_records))
             QMessageBox.information(self, "导出成功",
                 f"已成功导出 {len(export_records)} 条记录\n\n路径：{save_path}")
