@@ -135,11 +135,13 @@ class McpServer:
             },
             {
                 "name": "import_invoice",
-                "description": "导入一个 PDF 发票文件。解析发票号、日期、购买方、销售方、金额/税额等字段并存入数据库。如发票号重复则跳过。",
+                "description": "导入一个 PDF 发票文件。解析发票号、日期、购买方、销售方、金额/税额等字段并存入数据库。导入时可附带设置标签值（如企业号）和备注。如发票号重复则跳过。",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "pdf_path": {"type": "string", "description": "PDF 文件的绝对路径"},
+                        "tags": {"type": "object", "description": "导入时附带的标签键值对，如 {\"企业号\": \"14786\"}"},
+                        "remark": {"type": "string", "description": "导入时附带的备注"},
                     },
                     "required": ["pdf_path"]
                 }
@@ -317,6 +319,17 @@ class McpServer:
 
         inv = Invoice.from_dict(result)
         inv.ensure_defaults()
+
+        tags = args.get("tags")
+        if tags and isinstance(tags, dict):
+            if not inv.tags:
+                inv.tags = {}
+            for k, v in tags.items():
+                inv.tags[k] = str(v) if v else ""
+        remark = args.get("remark")
+        if remark is not None:
+            inv.remark = str(remark)
+
         existing = self._db.load()
         if inv.invoice_no and any(i.invoice_no == inv.invoice_no for i in existing):
             return {"status": "duplicate", "invoice_no": inv.invoice_no, "message": f"发票号 {inv.invoice_no} 已存在"}
