@@ -25,10 +25,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self._app = app_ref
         self.setWindowTitle("设置")
-        self.resize(480, 440)
-        self.setMinimumSize(420, 380)
+        self.setMinimumSize(420, 400)
         self._build_ui()
-        self.adjustSize()
+        self.layout().activate()
+        self.resize(self.sizeHint())
 
     # ── 辅助组件 ───────────────────────────────
 
