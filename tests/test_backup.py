@@ -59,24 +59,27 @@ class TestBackup(unittest.TestCase):
         conn.commit()
         conn.close()
 
-    def test_backup_creates_timestamped_copy(self):
+    def test_backup_creates_directory_backup(self):
         self._make_db(self.db_path)
         svc = BackupService(roots=[self.backup_root])
         count = svc.backup(self.db_path)
         self.assertGreaterEqual(count, 1)
         backup_dir = os.path.join(self.backup_root, ".lan-invoice-backup")
-        files = os.listdir(backup_dir)
-        self.assertEqual(len(files), 1)
-        self.assertTrue(files[0].startswith("invoices_"))
+        entries = os.listdir(backup_dir)
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(entries[0].startswith("data_"))
+        self.assertTrue(os.path.isdir(os.path.join(backup_dir, entries[0])))
 
-    def test_backup_file_is_valid_db(self):
+    def test_backup_contains_db_and_files(self):
         import sqlite3
         self._make_db(self.db_path)
         svc = BackupService(roots=[self.backup_root])
         svc.backup(self.db_path)
         backup_dir = os.path.join(self.backup_root, ".lan-invoice-backup")
-        backup_file = os.path.join(backup_dir, os.listdir(backup_dir)[0])
-        conn = sqlite3.connect(backup_file)
+        sub = os.path.join(backup_dir, os.listdir(backup_dir)[0])
+        db_in_backup = os.path.join(sub, "invoices.db")
+        self.assertTrue(os.path.exists(db_in_backup), f"Expected {db_in_backup}")
+        conn = sqlite3.connect(db_in_backup)
         row = conn.execute("SELECT name FROM invoices WHERE id=1").fetchone()
         conn.close()
         self.assertEqual(row[0], "test")

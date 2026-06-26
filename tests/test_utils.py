@@ -30,15 +30,28 @@ class TestCopyFileToDir(unittest.TestCase):
         self.assertEqual(result, expected)
         self.assertTrue(os.path.exists(expected))
 
-    def test_duplicate_rename(self):
-        src = os.path.join(self.tmp_src, "test.txt")
+    def test_md5_dedup_reuses_existing(self):
+        """相同内容文件 → MD5 去重，复用已有文件"""
+        src = os.path.join(self.tmp_src, "a.txt")
         with open(src, "w") as f:
             f.write("hello")
-        copy_file_to_dir(src, self.tmp_dst)
-        result = copy_file_to_dir(src, self.tmp_dst)
-        self.assertNotEqual(result, os.path.join(self.tmp_dst, "test.txt"))
-        self.assertTrue(os.path.exists(result))
-        self.assertIn("test_", os.path.basename(result))
+        r1 = copy_file_to_dir(src, self.tmp_dst)
+        r2 = copy_file_to_dir(src, self.tmp_dst)
+        self.assertEqual(r1, r2)
+
+    def test_different_content_same_name_renames(self):
+        """同名不同内容 → 重命名避免覆盖"""
+        src = os.path.join(self.tmp_src, "dup.txt")
+        with open(src, "w") as f:
+            f.write("content_a")
+        r1 = copy_file_to_dir(src, self.tmp_dst)
+        # 手动放一个同名不同内容的文件
+        with open(os.path.join(self.tmp_dst, "dup.txt"), "w") as f:
+            f.write("content_b_different")
+        # 现在 src 的 MD5 ≠ dst/dup.txt 的 MD5，且名字冲突 → 重命名
+        r2 = copy_file_to_dir(src, self.tmp_dst)
+        self.assertNotEqual(r2, os.path.join(self.tmp_dst, "dup.txt"))
+        self.assertIn("dup_", os.path.basename(r2))
 
     def test_nonexistent_src(self):
         result = copy_file_to_dir("/nonexistent/path.txt", self.tmp_dst)
@@ -74,18 +87,16 @@ class TestCopyFileToDir(unittest.TestCase):
             result = copy_file_to_dir(src, self.tmp_dst)
             self.assertEqual(result, src)
 
-    def test_multiple_duplicates_increment(self):
+    def test_md5_dedup_three_identical_copies(self):
+        """三个相同内容 → MD5 去重，全部返回同一文件"""
         src = os.path.join(self.tmp_src, "file.txt")
         with open(src, "w") as f:
-            f.write("data")
+            f.write("same_data")
         r1 = copy_file_to_dir(src, self.tmp_dst)
         r2 = copy_file_to_dir(src, self.tmp_dst)
         r3 = copy_file_to_dir(src, self.tmp_dst)
-        self.assertTrue(os.path.exists(r1))
-        self.assertTrue(os.path.exists(r2))
-        self.assertTrue(os.path.exists(r3))
-        names = {os.path.basename(r) for r in [r1, r2, r3]}
-        self.assertEqual(len(names), 3)
+        self.assertEqual(r1, r2)
+        self.assertEqual(r2, r3)
 
 
 if __name__ == "__main__":

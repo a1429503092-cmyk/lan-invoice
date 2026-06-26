@@ -77,15 +77,13 @@ class TestCopyFileToDir(unittest.TestCase):
         self.assertEqual(result, expected)
         self.assertTrue(os.path.exists(expected))
 
-    def test_duplicate_rename(self):
+    def test_md5_dedup_reuses_existing(self):
         src = os.path.join(self.tmp_src, "test.txt")
         with open(src, "w") as f:
             f.write("hello")
-        _copy_file_to_dir(src, self.tmp_dst)
-        result = _copy_file_to_dir(src, self.tmp_dst)
-        self.assertNotEqual(result, os.path.join(self.tmp_dst, "test.txt"))
-        self.assertTrue(os.path.exists(result))
-        self.assertIn("test_", os.path.basename(result))
+        r1 = _copy_file_to_dir(src, self.tmp_dst)
+        r2 = _copy_file_to_dir(src, self.tmp_dst)
+        self.assertEqual(r1, r2)  # MD5 相同，复用同一个文件
 
     def test_nonexistent_src(self):
         result = _copy_file_to_dir("/nonexistent/path.txt", self.tmp_dst)

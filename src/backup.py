@@ -13,9 +13,9 @@ from logger import getLogger
 log = getLogger(__name__)
 
 _BACKUP_DIR_NAME = ".lan-invoice-backup"
-_BACKUP_PATTERN = re.compile(r"^invoices_(\d{8}_\d{6})\.db$")
-_DEBOUNCE_SECONDS = 5  # 两次备份最小间隔
-_MIN_KEEP = 3  # 每个分区至少保留的备份数
+_BACKUP_PATTERN = re.compile(r"^(?:invoices_(\d{8}_\d{6})\.db|data_(\d{8}_\d{6}))$")
+_DEBOUNCE_SECONDS = 5
+_MIN_KEEP = 3
 
 
 class BackupService:
@@ -90,20 +90,38 @@ class BackupService:
             return 0
         self._last_backup_time = now
         dirs = self.get_backup_dirs()
-        base = os.path.splitext(os.path.basename(db_path))[0]
+        data_dir = os.path.dirname(db_path)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        fname = f"{base}_{ts}.db"
         count = 0
         for d in dirs:
-            dst = os.path.join(d, fname)
+            sub = os.path.join(d, f"data_{ts}")
             try:
-                shutil.copy2(db_path, dst)
+                os.makedirs(sub, exist_ok=True)
+                # 复制整个数据目录（含 DB、PDF 发票、附件等所有文件）
+                self._copy_tree(data_dir, sub)
                 count += 1
             except OSError as e:
-                log.warning("备份失败: %s → %s | %s", db_path, dst, e)
+                log.warning("备份失败: %s → %s | %s", data_dir, sub, e)
         if count > 0:
-            log.info("备份完成: %d 份", count)
+            log.info("备份完成: %d 份 (含完整数据目录)", count)
         return count
+
+    @staticmethod
+    def _copy_tree(src: str, dst: str):
+        """递归复制目录树，跳过 WAL/SHM 临时文件"""
+        for entry in os.listdir(src):
+            s = os.path.join(src, entry)
+            d = os.path.join(dst, entry)
+            if os.path.isdir(s):
+                os.makedirs(d, exist_ok=True)
+                BackupService._copy_tree(s, d)
+            elif os.path.isfile(s):
+                # 跳过 SQLite WAL/SHM 临时文件
+                if entry.endswith(("-wal", "-shm")):
+                    continue
+                # 同名文件存在则跳过（不覆盖）
+                if not os.path.exists(d):
+                    shutil.copy2(s, d)
 
     # ── 恢复 ──────────────────────────────────
 
@@ -114,9 +132,15 @@ class BackupService:
             log.warning("无有效备份，无法恢复: %s", db_path)
             return False
         try:
-            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-            shutil.copy2(latest, db_path)
-            log.info("数据库从备份恢复: %s → %s", latest, db_path)
+            target_dir = os.path.dirname(db_path) or "."
+            os.makedirs(target_dir, exist_ok=True)
+            if os.path.isdir(latest):
+                # 新格式：data_TIMESTAMP/ 目录，复制全部文件
+                self._copy_tree(latest, target_dir)
+            else:
+                # 旧格式：单个 .db 文件
+                shutil.copy2(latest, db_path)
+            log.info("已从备份恢复: %s", latest)
             return True
         except OSError as e:
             log.error("恢复失败: %s → %s | %s", latest, db_path, e)
@@ -130,10 +154,16 @@ class BackupService:
             for f in os.listdir(d):
                 m = _BACKUP_PATTERN.match(f)
                 if m:
-                    candidates.append((m.group(1), os.path.join(d, f)))
+                    ts = m.group(1) or m.group(2) or ""
+                    candidates.append((ts, os.path.join(d, f)))
         candidates.sort(key=lambda x: x[0], reverse=True)
         for _, fp in candidates:
-            if self._check_integrity(fp):
+            if os.path.isdir(fp):
+                # 新格式目录
+                db = os.path.join(fp, "invoices.db")
+                if os.path.exists(db) and self._check_integrity(db):
+                    return fp
+            elif self._check_integrity(fp):
                 return fp
         return None
 
@@ -158,15 +188,18 @@ class BackupService:
                 m = _BACKUP_PATTERN.match(f)
                 if m:
                     fp = os.path.join(d, f)
-                    backups.append((os.path.getmtime(fp), fp))
-            # 按时间降序：最新的排前面
+                    mtime = os.path.getmtime(fp)
+                    backups.append((mtime, fp))
             backups.sort(key=lambda x: x[0], reverse=True)
             for i, (mtime, fp) in enumerate(backups):
                 if i < _MIN_KEEP:
-                    continue  # 保留最近 N 个
+                    continue
                 if mtime < cutoff:
                     try:
-                        os.remove(fp)
+                        if os.path.isdir(fp):
+                            shutil.rmtree(fp)
+                        else:
+                            os.remove(fp)
                         removed += 1
                     except OSError:
                         pass
