@@ -136,6 +136,19 @@ class InvoiceApp(QMainWindow):
             if self._backup.restore(self._db.data_file):
                 log.info("已从备份恢复数据库")
             else:
+                # 尝试从 JSON 备份文件重新迁移
+                bak_path = json_path + ".bak"
+                if os.path.exists(bak_path):
+                    log.info("尝试从 JSON 备份重新迁移…")
+                    try:
+                        os.remove(self._db.data_file)
+                    except OSError:
+                        pass
+                    self._db = Database(self._db.data_file)
+                    migrated = self._db.migrate_from_json(bak_path)
+                    if migrated > 0:
+                        log.info("已从 JSON 备份恢复 %d 条记录", migrated)
+                        return
                 log.warning("无可用备份，重建空数据库")
                 try:
                     os.remove(self._db.data_file)
@@ -795,12 +808,17 @@ class InvoiceApp(QMainWindow):
         try:
             self._sync_records_from_table()
             self._db.save(self.records)
-            self._backup.backup(self._db.data_file)
-            self._backup.cleanup(keep_days=30)
             log.debug("数据已保存: %d 条", len(self.records))
-        except (OSError, IOError, Exception) as e:
+        except OSError as e:
             log.error("数据保存失败: %s", e)
             self.status.showMessage(f"数据保存失败: {e}")
+            return
+        try:
+            self._backup.backup(self._db.data_file)
+            self._backup.cleanup(keep_days=30)
+        except OSError as e:
+            log.warning("备份失败（数据已保存）: %s", e)
+            self.status.showMessage(f"备份失败，但数据已保存: {e}")
 
     def _sync_records_from_table(self):
         shown = self._shown_records
@@ -917,7 +935,7 @@ class InvoiceApp(QMainWindow):
             ext = os.path.splitext(path)[1].lower()
             if ext == '.pdf':
                 pdf_files.append(path)
-            else:
+            elif ext in IMG_EXTS or ext in ATTACH_EXTS:
                 att_files.append(path)
 
         if pdf_files:
