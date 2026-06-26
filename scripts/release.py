@@ -1,0 +1,186 @@
+# -*- coding: utf-8 -*-
+"""一键构建 + 发布到 Gitee Releases
+
+用法:
+  uv run python scripts/release.py          # 构建并发布
+  uv run python scripts/release.py --dry    # 仅构建，不发布
+  uv run python scripts/release.py --ver 5.3.0  # 指定版本号
+
+环境变量:
+  GITEE_TOKEN  Gitee 私人令牌（发布时需要）
+"""
+
+import os
+import sys
+import re
+import subprocess
+import json
+import shutil
+import http.client
+from urllib.parse import urlencode
+from datetime import datetime
+
+REPO_OWNER = "GUYI33"
+REPO_NAME = "lan-invoice"
+API_HOST = "gitee.com"
+VERSION_FILE = "src/version.py"
+SPEC_FILE = "发票归档.spec"
+DIST_DIR = "dist"
+
+
+def read_version():
+    with open(VERSION_FILE, encoding="utf-8") as f:
+        content = f.read()
+    m = re.search(r'APP_VERSION\s*=\s*["\'](.+?)["\']', content)
+    if not m:
+        sys.exit(f"无法从 {VERSION_FILE} 提取版本号")
+    return m.group(1)
+
+
+def bump_version(old: str) -> str:
+    parts = old.split(".")
+    parts[-1] = str(int(parts[-1]) + 1)
+    return ".".join(parts)
+
+
+def write_version(ver: str):
+    content = open(VERSION_FILE, encoding="utf-8").read()
+    content = re.sub(r'(APP_VERSION\s*=\s*)["\'].+?["\']', f'\\1"{ver}"', content)
+    with open(VERSION_FILE, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"版本号: {old_ver} → {ver}")
+
+
+def build():
+    print("构建 EXE...")
+    subprocess.run(
+        ["uv", "run", "pyinstaller", SPEC_FILE, "--clean", "--noconfirm"],
+        check=True
+    )
+    print("构建完成")
+
+
+def git_commit_and_tag(ver: str):
+    subprocess.run(["git", "add", VERSION_FILE], check=True)
+    subprocess.run(["git", "commit", "-m", f"release: v{ver}"], check=True)
+    subprocess.run(["git", "tag", "-a", f"v{ver}", "-m", f"v{ver}"], check=True)
+    subprocess.run(["git", "push", "origin", "master", "--tags"], check=True)
+    print(f"已推送 tag v{ver}")
+
+
+def create_release(ver: str, token: str) -> dict:
+    body = f"""## v{ver}
+
+构建日期：{datetime.now().strftime('%Y-%m-%d')}
+
+| 文件 | 说明 |
+|------|------|
+| 发票归档.exe | Windows 桌面程序 |
+
+### 安装说明
+下载「发票归档.exe」放到任意目录，双击启动。
+"""
+
+    params = urlencode({
+        "access_token": token,
+        "tag_name": f"v{ver}",
+        "name": f"v{ver}",
+        "body": body,
+        "target_commitish": "master",
+        "prerelease": "false",
+    })
+
+    conn = http.client.HTTPSConnection(API_HOST)
+    conn.request(
+        "POST",
+        f"/api/v5/repos/{REPO_OWNER}/{REPO_NAME}/releases",
+        body=params,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    resp = conn.getresponse()
+    data = json.loads(resp.read().decode())
+    conn.close()
+
+    if resp.status not in (200, 201):
+        sys.exit(f"创建 Release 失败 ({resp.status}): {data}")
+
+    release_id = data["id"]
+    print(f"Release 已创建 (id={release_id})")
+    return data
+
+
+def upload_asset(release_id: int, filepath: str, token: str):
+    """上传附件到 Release — 用 multipart 上传"""
+
+    boundary = "----FormBoundary7MA4YWxkTrZu0gW"
+
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+
+    filename = os.path.basename(filepath)
+    body = (
+        f"--{boundary}\r\n"
+        f"Content-Disposition: form-data; name=\"access_token\"\r\n\r\n"
+        f"{token}\r\n"
+        f"--{boundary}\r\n"
+        f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+        f"Content-Type: application/octet-stream\r\n\r\n"
+    ).encode("utf-8")
+    body += file_data
+    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    conn = http.client.HTTPSConnection(API_HOST)
+    conn.request(
+        "POST",
+        f"/api/v5/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/attach_files",
+        body=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        }
+    )
+    resp = conn.getresponse()
+    data = json.loads(resp.read().decode())
+    conn.close()
+
+    if resp.status not in (200, 201):
+        sys.exit(f"上传附件失败 ({resp.status}): {data}")
+    print(f"附件已上传: {filename} → {data.get('browser_download_url', '')}")
+
+
+def main():
+    dry = "--dry" in sys.argv
+    ver_arg = None
+    for a in sys.argv[1:]:
+        if a.startswith("--ver"):
+            ver_arg = a.split("=")[-1] if "=" in a else None
+
+    old_ver = read_version()
+    ver = ver_arg or bump_version(old_ver)
+
+    if ver != old_ver:
+        write_version(ver)
+
+    build()
+
+    if dry:
+        print(f"[dry] 跳过发布，EXE 在 {DIST_DIR}/")
+        return
+
+    token = os.environ.get("GITEE_TOKEN")
+    if not token:
+        sys.exit("请设置环境变量 GITEE_TOKEN")
+
+    exe_path = os.path.join(DIST_DIR, "发票归档.exe")
+    if not os.path.exists(exe_path):
+        sys.exit(f"EXE 不存在: {exe_path}")
+
+    if ver != old_ver:
+        git_commit_and_tag(ver)
+
+    release = create_release(ver, token)
+    upload_asset(release["id"], exe_path, token)
+    print(f"\n发布成功: https://gitee.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{ver}")
+
+
+if __name__ == "__main__":
+    main()
