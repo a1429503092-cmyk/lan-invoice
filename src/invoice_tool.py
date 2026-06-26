@@ -31,6 +31,7 @@ from backup import BackupService
 from config_manager import ConfigManager
 from utils import safe_float
 from services.invoice_service import InvoiceService
+from update_checker import UpdateChecker
 from ui.icons import get as get_icon
 from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
                        ACCENT, ACCENT_LIGHT, RED, WHITE,
@@ -102,6 +103,9 @@ class InvoiceApp(QMainWindow):
         log.info("InvoiceApp 初始化完成 | 版本=%s | 数据目录=%s",
                  APP_VERSION, self._data_dir)
         QTimer.singleShot(500, self._check_desktop_shortcut)
+        self._update_checker = UpdateChecker(APP_VERSION, self)
+        self._update_checker.new_version_found.connect(self._on_new_version)
+        QTimer.singleShot(3000, self._update_checker.check)
 
     # ── 记录辅助方法 ────────────────────────────
 
@@ -1064,6 +1068,15 @@ class InvoiceApp(QMainWindow):
                 self.status.showMessage("桌面快捷方式已创建")
         except Exception:
             pass    # 静默失败，不影响主流程
+
+    def _on_new_version(self, version: str, url: str):
+        reply = QMessageBox.question(
+            self, "发现新版本",
+            f"检测到新版本 v{version}\n当前版本：v{APP_VERSION}\n\n是否前往下载？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        )
+        if reply == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl(url))
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(

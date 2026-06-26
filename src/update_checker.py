@@ -1,0 +1,57 @@
+# -*- coding: utf-8 -*-
+"""更新检查 — 从 Gitee Releases 获取最新版本信息"""
+
+from PyQt5.QtCore import QObject, QUrl
+from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+
+
+GITEE_API = "https://gitee.com/api/v5/repos/GUYI33/lan-invoice/releases/latest"
+
+
+class UpdateChecker(QObject):
+
+    def __init__(self, current_version: str, parent=None):
+        super().__init__(parent)
+        self._current = current_version
+        self._nam = QNetworkAccessManager(self)
+        self._nam.finished.connect(self._on_reply)
+
+    def check(self):
+        req = QNetworkRequest(QUrl(GITEE_API))
+        req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
+        self._nam.get(req)
+
+    def _on_reply(self, reply: QNetworkReply):
+        if reply.error() != QNetworkReply.NoError:
+            reply.deleteLater()
+            return
+        try:
+            import json
+            data = json.loads(bytes(reply.readAll()).decode("utf-8"))
+            tag = data.get("tag_name", "").lstrip("v")
+            if not tag:
+                return
+            html_url = data.get("html_url", "")
+            if self._version_gt(tag, self._current):
+                self.new_version_found.emit(tag, html_url)
+        except (json.JSONDecodeError, KeyError, TypeError, OSError):
+            pass
+        finally:
+            reply.deleteLater()
+
+    @staticmethod
+    def _version_gt(a: str, b: str) -> bool:
+        """判断版本号 a 是否大于 b，支持 x.y.z 格式"""
+        try:
+            from itertools import zip_longest
+            for x, y in zip_longest(a.split("."), b.split("."), fillvalue="0"):
+                if int(x) > int(y):
+                    return True
+                if int(x) < int(y):
+                    return False
+            return False
+        except ValueError:
+            return a != b
+
+    from PyQt5.QtCore import pyqtSignal
+    new_version_found = pyqtSignal(str, str)
