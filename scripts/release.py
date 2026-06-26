@@ -166,9 +166,19 @@ def main():
         print(f"[dry] 跳过发布，EXE 在 {DIST_DIR}/")
         return
 
+    # 从 .env 文件加载（优先级低于环境变量）
+    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_file):
+        for line in open(env_file, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                if k.strip() not in os.environ:
+                    os.environ[k.strip()] = v.strip()
+
     token = os.environ.get("GITEE_TOKEN")
     if not token:
-        sys.exit("请设置环境变量 GITEE_TOKEN")
+        sys.exit("请设置环境变量 GITEE_TOKEN 或在项目根目录创建 .env 文件")
 
     exe_path = os.path.join(DIST_DIR, "发票归档.exe")
     if not os.path.exists(exe_path):
