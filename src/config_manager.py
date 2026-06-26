@@ -61,3 +61,37 @@ class ConfigManager:
     @property
     def path(self) -> str:
         return self._path
+
+    # ── WebDAV 远程备份 ────────────────────────
+
+    @property
+    def webdav_url(self) -> str:
+        return self._data.get("webdav_url", "")
+
+    @webdav_url.setter
+    def webdav_url(self, v: str):
+        self._data["webdav_url"] = v
+
+    @property
+    def webdav_username(self) -> str:
+        return self._data.get("webdav_username", "")
+
+    @webdav_username.setter
+    def webdav_username(self, v: str):
+        self._data["webdav_username"] = v
+
+    @property
+    def webdav_password(self) -> str:
+        return self._data.get("webdav_password", "")
+
+    @webdav_password.setter
+    def webdav_password(self, v: str):
+        self._data["webdav_password"] = v
+
+    @property
+    def webdav_enabled(self) -> bool:
+        return bool(self._data.get("webdav_enabled", False))
+
+    @webdav_enabled.setter
+    def webdav_enabled(self, v: bool):
+        self._data["webdav_enabled"] = v

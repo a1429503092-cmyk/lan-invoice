@@ -743,6 +743,7 @@ class InvoiceApp(QMainWindow):
         except OSError as e:
             log.warning("备份失败（数据已保存）: %s", e)
             self.status.showMessage(f"备份失败，但数据已保存: {e}")
+        self._do_webdav_sync(silent=True)
 
     def _sync_records_from_table(self):
         shown = self._shown_records
@@ -1008,6 +1009,34 @@ class InvoiceApp(QMainWindow):
         self._manual_check_pending = True
         self.status.showMessage("正在检查更新…")
         self._update_checker.check()
+
+    def _do_webdav_sync(self, silent=True):
+        if not self._config.webdav_enabled or not self._config.webdav_url:
+            return
+        from webdav_sync import sync_to_webdav
+        from PyQt5.QtCore import QThread
+        cfg = self._config
+        url = cfg.webdav_url
+        user = cfg.webdav_username
+        pw = cfg.webdav_password
+        data_dir = self._data_dir
+
+        def run():
+            try:
+                result = sync_to_webdav(data_dir, url, user, pw)
+                if result.get("failed", 0) > 0:
+                    log.warning("WebDAV 同步部分失败: %s", result)
+            except Exception as e:
+                log.warning("WebDAV 同步失败: %s", e)
+
+        class _SyncThread(QThread):
+            def run(self):
+                run()
+
+        if not silent:
+            self.status.showMessage("WebDAV 同步中…")
+        thread = _SyncThread(self)
+        thread.start()
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(

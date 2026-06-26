@@ -184,6 +184,58 @@ class SettingsDialog(QDialog):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
+        layout.addWidget(self._hline())
+
+        layout.addWidget(self._section_title("远程备份（WebDAV）"))
+
+        webdav_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
+        webdav_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        webdav_hint.setWordWrap(True)
+        layout.addWidget(webdav_hint)
+
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        url_row.addWidget(QLabel("地址"))
+        self.edit_wd_url = QLineEdit()
+        self.edit_wd_url.setPlaceholderText("https://nas.local:5006/invoice-backup/")
+        self.edit_wd_url.setFixedHeight(32)
+        url_row.addWidget(self.edit_wd_url, 1)
+        layout.addLayout(url_row)
+
+        auth_row = QHBoxLayout()
+        auth_row.setSpacing(8)
+        auth_row.addWidget(QLabel("账号"))
+        self.edit_wd_user = QLineEdit()
+        self.edit_wd_user.setPlaceholderText("用户名")
+        self.edit_wd_user.setFixedHeight(32)
+        auth_row.addWidget(self.edit_wd_user, 1)
+        auth_row.addWidget(QLabel("密码"))
+        self.edit_wd_pass = QLineEdit()
+        self.edit_wd_pass.setPlaceholderText("密码")
+        self.edit_wd_pass.setEchoMode(QLineEdit.Password)
+        self.edit_wd_pass.setFixedHeight(32)
+        auth_row.addWidget(self.edit_wd_pass, 1)
+        layout.addLayout(auth_row)
+
+        wd_btn_row = QHBoxLayout()
+        wd_btn_row.setSpacing(8)
+        btn_test_wd = QPushButton("测试连接")
+        btn_test_wd.setFixedHeight(32)
+        btn_test_wd.clicked.connect(self._test_webdav)
+        btn_sync_wd = QPushButton("立即同步")
+        btn_sync_wd.setFixedHeight(32)
+        btn_sync_wd.clicked.connect(self._sync_webdav_now)
+        btn_restore_wd = QPushButton("从远程恢复…")
+        btn_restore_wd.setFixedHeight(32)
+        btn_restore_wd.clicked.connect(self._restore_webdav)
+        wd_btn_row.addWidget(btn_test_wd)
+        wd_btn_row.addWidget(btn_sync_wd)
+        wd_btn_row.addWidget(btn_restore_wd)
+        wd_btn_row.addStretch()
+        layout.addLayout(wd_btn_row)
+
+        self._load_webdav_config()
+
         layout.addStretch()
 
         btn_close = QPushButton("关闭")
@@ -193,6 +245,62 @@ class SettingsDialog(QDialog):
 
     def _check_update(self):
         self._app.check_update()
+
+    # ── WebDAV ──────────────────────────────────
+
+    def _load_webdav_config(self):
+        cfg = self._app._config
+        self.edit_wd_url.setText(cfg.webdav_url)
+        self.edit_wd_user.setText(cfg.webdav_username)
+        self.edit_wd_pass.setText(cfg.webdav_password)
+
+    def _save_webdav_config(self):
+        cfg = self._app._config
+        cfg.webdav_url = self.edit_wd_url.text().strip()
+        cfg.webdav_username = self.edit_wd_user.text().strip()
+        cfg.webdav_password = self.edit_wd_pass.text()
+        cfg.webdav_enabled = bool(cfg.webdav_url)
+        cfg.save()
+
+    def _test_webdav(self):
+        self._save_webdav_config()
+        from webdav_sync import test_connection
+        cfg = self._app._config
+        if test_connection(cfg.webdav_url, cfg.webdav_username, cfg.webdav_password):
+            QMessageBox.information(self, "测试成功", "WebDAV 连接正常")
+        else:
+            QMessageBox.warning(self, "测试失败",
+                                f"无法连接到 {cfg.webdav_url}\n请检查地址和账号密码。")
+
+    def _sync_webdav_now(self):
+        self._save_webdav_config()
+        cfg = self._app._config
+        if not cfg.webdav_url:
+            QMessageBox.warning(self, "提示", "请先填写 WebDAV 地址")
+            return
+        self._app._do_webdav_sync(silent=False)
+
+    def _restore_webdav(self):
+        self._save_webdav_config()
+        cfg = self._app._config
+        if not cfg.webdav_url:
+            QMessageBox.warning(self, "提示", "请先填写 WebDAV 地址")
+            return
+        reply = QMessageBox.warning(
+            self, "确认恢复",
+            "将从 WebDAV 下载备份文件，覆盖本地所有数据。\n确定要恢复吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            from webdav_sync import restore_from_webdav
+            self._app._save_data()
+            ok = restore_from_webdav(self._app._data_dir, cfg.webdav_url,
+                                     cfg.webdav_username, cfg.webdav_password)
+            if ok:
+                QMessageBox.information(self, "恢复完成", "数据已从 WebDAV 恢复，请重新打开软件。")
+                self._app.close()
+            else:
+                QMessageBox.warning(self, "恢复失败", "从 WebDAV 下载数据失败，请检查网络和配置。")
 
         from ui.theme import DIALOG_QSS
         self.setStyleSheet(DIALOG_QSS)
