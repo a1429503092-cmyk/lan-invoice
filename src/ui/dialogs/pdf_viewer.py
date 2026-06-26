@@ -148,16 +148,16 @@ class PdfViewerDialog(QDialog):
 
     @staticmethod
     def _screen_dpi() -> int:
-        """获取屏幕物理 DPI 作为渲染分辨率，保底 200，封顶 400"""
+        """获取渲染分辨率：取屏幕物理 DPI × 1.5，保证缩放不糊"""
         try:
             from PyQt5.QtWidgets import QApplication
             app = QApplication.instance()
             if app and app.primaryScreen():
-                dpi = int(app.primaryScreen().physicalDotsPerInch())
-                return max(200, min(dpi, 400))
+                dpi = int(app.primaryScreen().physicalDotsPerInch() * 1.5)
+                return max(300, min(dpi, 600))
         except Exception:
             pass
-        return 200
+        return 300
 
     def _load_pdf(self):
         import fitz
@@ -286,6 +286,7 @@ class PdfViewerDialog(QDialog):
             f"QGraphicsView {{ background:{DARK_SURFACE}; border:none; }}"
         )
         self.view.setRenderHint(QPainter.Antialiasing)
+        self.view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.view.setDragMode(QGraphicsView.ScrollHandDrag)
         self.view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.view.viewport().installEventFilter(self)
