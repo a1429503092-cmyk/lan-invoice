@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "invoice": {
+      "command": "uv",
+      "args": ["run", "python", "src/invoice_tool.py", "--mcp"],
+      "cwd": "D:/Code/Python/lan-invoice"
+    }
+  }
+}

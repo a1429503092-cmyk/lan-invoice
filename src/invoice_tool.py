@@ -1718,4 +1718,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--mcp" in sys.argv:
+        from mcp_server import McpServer
+        McpServer().run()
+    else:
+        main()
