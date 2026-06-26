@@ -236,17 +236,19 @@ class InvoiceApp(QMainWindow):
 
         filter_bar.addWidget(QLabel("筛选："))
 
-        filter_bar.addWidget(QLabel("年份"))
         self.combo_year = QComboBox()
         self.combo_year.setFixedWidth(90)
         self.combo_year.addItem("全部", None)
+        filter_bar.addWidget(QLabel("年份"))
+        filter_bar.addWidget(self.combo_year)
 
-        filter_bar.addWidget(QLabel("月份"))
         self.combo_month = QComboBox()
         self.combo_month.setFixedWidth(80)
         self.combo_month.addItem("全部", None)
         for i in range(1, 13):
             self.combo_month.addItem(f"{i:02d} 月", i)
+        filter_bar.addWidget(QLabel("月份"))
+        filter_bar.addWidget(self.combo_month)
 
         self.combo_year.currentIndexChanged.connect(self._apply_filter)
         self.combo_month.currentIndexChanged.connect(self._apply_filter)
@@ -343,7 +345,7 @@ class InvoiceApp(QMainWindow):
         self.table.setColumnCount(len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
+        self.table.setShowGrid(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -387,7 +389,7 @@ class InvoiceApp(QMainWindow):
         self._freeze_table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self._freeze_table.setColumnWidth(0, FREEZE_COL_WIDTH)
         self._freeze_table.verticalHeader().setDefaultSectionSize(TABLE_ROW_HEIGHT)
-        self._freeze_table.setShowGrid(False)
+        self._freeze_table.setShowGrid(True)
         self._freeze_table.setFocusPolicy(Qt.NoFocus)
         self._freeze_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._freeze_table.setSelectionMode(QAbstractItemView.NoSelection)

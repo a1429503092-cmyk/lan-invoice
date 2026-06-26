@@ -36,6 +36,9 @@ QHeaderView::section {{
     border: none;
     border-right: 1px solid rgba(255,255,255,0.15);
 }}
+QTableWidget {{
+    gridline-color: {BORDER_LIGHT};
+}}
 QTableWidget::item:selected {{
     background: {ACCENT_LIGHT};
     color: {TEXT};
