@@ -239,6 +239,7 @@ class McpServer:
         ]
 
     def _read_resource(self, params: dict):
+        params = params or {}
         uri = params.get("uri", "")
         if uri == "invoices://all":
             data = [self._inv_to_dict(inv) for inv in self._db.load()]
@@ -254,7 +255,7 @@ class McpServer:
 
     def _call_tool(self, params: dict):
         name = params.get("name", "")
-        args = params.get("arguments", {})
+        args = params.get("arguments") or {}
         fn = self._tools.get(name)
         if not fn:
             return {"content": [{"type": "text", "text": json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False)}], "isError": True}
@@ -392,6 +393,8 @@ class McpServer:
         action = args.get("action", "")
         if not action:
             return {"error": "缺少必填参数: action"}
+        if action not in ("list", "add", "delete"):
+            return {"error": f"未知操作: {action}"}
         templates = self._config.tag_templates
         if action == "list":
             return {"tags": templates}
@@ -412,7 +415,7 @@ class McpServer:
             self._config.tag_templates = templates
             self._config.save()
             return {"tags": templates, "message": f"已删除标签「{name}」"}
-        return {"error": f"未知操作: {action}"}
+        return {"error": "内部错误"}  # unreachable
 
     def _update_invoice(self, args):
         inv_no = (args.get("invoice_no") or "").strip()
