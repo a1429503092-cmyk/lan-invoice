@@ -43,12 +43,12 @@ def bump_version(old: str) -> str:
     return ".".join(parts)
 
 
-def write_version(ver: str):
+def write_version(old: str, new: str):
     content = open(VERSION_FILE, encoding="utf-8").read()
-    content = re.sub(r'(APP_VERSION\s*=\s*)["\'].+?["\']', f'\\1"{ver}"', content)
+    content = re.sub(r'(APP_VERSION\s*=\s*)["\'].+?["\']', f'\\1"{new}"', content)
     with open(VERSION_FILE, "w", encoding="utf-8") as f:
         f.write(content)
-    print(f"版本号: {old_ver} → {ver}")
+    print(f"版本号: {old} → {new}")
 
 
 def build():
@@ -158,7 +158,7 @@ def main():
     ver = ver_arg or bump_version(old_ver)
 
     if ver != old_ver:
-        write_version(ver)
+        write_version(old_ver, ver)
 
     build()
 
