@@ -105,7 +105,9 @@ class InvoiceApp(QMainWindow):
         QTimer.singleShot(500, self._check_desktop_shortcut)
         self._update_checker = UpdateChecker(APP_VERSION, self)
         self._update_checker.new_version_found.connect(self._on_new_version)
+        self._update_checker.check_finished.connect(self._on_check_finished)
         QTimer.singleShot(3000, self._update_checker.check)
+        self._manual_check_pending = False
 
     # ── 记录辅助方法 ────────────────────────────
 
@@ -995,6 +997,21 @@ class InvoiceApp(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             QDesktopServices.openUrl(QUrl(url))
+        self._manual_check_pending = False
+
+    def _on_check_finished(self, ok: bool, current: str, _url: str):
+        if not self._manual_check_pending:
+            return
+        self._manual_check_pending = False
+        if ok:
+            QMessageBox.information(self, "检查更新", f"当前已是最新版本 v{current}")
+        else:
+            QMessageBox.warning(self, "检查更新", "无法连接到 Gitee，请检查网络后重试。")
+
+    def check_update(self):
+        self._manual_check_pending = True
+        self.status.showMessage("正在检查更新…")
+        self._update_checker.check()
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(

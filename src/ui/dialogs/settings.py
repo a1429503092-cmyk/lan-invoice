@@ -78,6 +78,10 @@ class SettingsDialog(QDialog):
         lbl_ver = QLabel(f"v{getattr(self._app, 'APP_VERSION', '')}")
         lbl_ver.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         title_row.addWidget(lbl_ver)
+        btn_check = QPushButton("检查更新")
+        btn_check.setFlat(True)
+        btn_check.clicked.connect(self._check_update)
+        title_row.addWidget(btn_check)
         layout.addLayout(title_row)
 
         layout.addWidget(self._hline())
@@ -185,6 +189,9 @@ class SettingsDialog(QDialog):
         btn_close.setFixedHeight(32)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close, alignment=Qt.AlignRight)
+
+    def _check_update(self):
+        self._app.check_update()
 
         from ui.theme import DIALOG_QSS
         self.setStyleSheet(DIALOG_QSS)

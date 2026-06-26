@@ -23,6 +23,7 @@ class UpdateChecker(QObject):
 
     def _on_reply(self, reply: QNetworkReply):
         if reply.error() != QNetworkReply.NoError:
+            self.check_finished.emit(False, "", "")
             reply.deleteLater()
             return
         try:
@@ -34,8 +35,10 @@ class UpdateChecker(QObject):
             html_url = data.get("html_url") or f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}"
             if self._version_gt(tag, self._current):
                 self.new_version_found.emit(tag, html_url)
+            else:
+                self.check_finished.emit(True, self._current, "")
         except (json.JSONDecodeError, KeyError, TypeError, OSError):
-            pass
+            self.check_finished.emit(False, "", "")
         finally:
             reply.deleteLater()
 
@@ -55,3 +58,4 @@ class UpdateChecker(QObject):
 
     from PyQt5.QtCore import pyqtSignal
     new_version_found = pyqtSignal(str, str)
+    check_finished = pyqtSignal(bool, str, str)
