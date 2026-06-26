@@ -31,7 +31,7 @@ class UpdateChecker(QObject):
             tag = data.get("tag_name", "").lstrip("v")
             if not tag:
                 return
-            html_url = data.get("html_url", "")
+            html_url = data.get("html_url") or f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}"
             if self._version_gt(tag, self._current):
                 self.new_version_found.emit(tag, html_url)
         except (json.JSONDecodeError, KeyError, TypeError, OSError):
