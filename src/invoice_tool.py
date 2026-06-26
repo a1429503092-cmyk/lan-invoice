@@ -36,7 +36,7 @@ from ui.icons import get as get_icon
 from ui.theme import (TABLE_QSS, PROGRESS_QSS, SUMMARY_FRAME_QSS,
                        ACCENT, ACCENT_LIGHT, RED, WHITE,
                        TEXT, TEXT_SEC, TEXT_DIM,
-                       BORDER, BORDER_LIGHT, MONO_FONT, FS_SM, FS)
+                       BORDER, BORDER_LIGHT, MONO_FONT, FS)
 from version import APP_VERSION
 from logger import setup_logging, shutdown_logging, getLogger
 log = getLogger(__name__)
@@ -224,42 +224,30 @@ class InvoiceApp(QMainWindow):
         self.btn_export = QPushButton(" 导出 Excel")
         self.btn_export.setIcon(get_icon('export'))
         self.btn_export.setFixedHeight(36)
-        self.btn_export.setStyleSheet(
-            f"background:{ACCENT}; color:white; font-weight:bold; border:none; padding:0 12px;")
-        self.btn_export.setCursor(Qt.PointingHandCursor)
-        self.btn_export.setFixedWidth(120)
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
         top_bar.addWidget(self.btn_clear)
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
-
         top_bar.addSpacing(12)
         top_bar.addWidget(self.btn_export)
         main_layout.addLayout(top_bar)
 
         # ── 工具栏第二行：多维筛选 ───────────────
         filter_bar = QHBoxLayout()
-        filter_bar.setSpacing(12)
+        filter_bar.setSpacing(8)
 
-        lbl_filter = QLabel("筛选：")
-        lbl_filter.setStyleSheet(f"font-size:{FS}; font-weight:bold; color:{TEXT};")
+        filter_bar.addWidget(QLabel("筛选："))
 
-        # 年份
-        lbl_y = QLabel("年份")
-        lbl_y.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        filter_bar.addWidget(QLabel("年份"))
         self.combo_year = QComboBox()
         self.combo_year.setFixedWidth(90)
-        self.combo_year.setFixedHeight(30)
         self.combo_year.addItem("全部", None)
 
-        # 月份
-        lbl_m = QLabel("月份")
-        lbl_m.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        filter_bar.addWidget(QLabel("月份"))
         self.combo_month = QComboBox()
         self.combo_month.setFixedWidth(80)
-        self.combo_month.setFixedHeight(30)
         self.combo_month.addItem("全部", None)
         for i in range(1, 13):
             self.combo_month.addItem(f"{i:02d} 月", i)
@@ -267,29 +255,16 @@ class InvoiceApp(QMainWindow):
         self.combo_year.currentIndexChanged.connect(self._apply_filter)
         self.combo_month.currentIndexChanged.connect(self._apply_filter)
 
-        # 高级筛选切换按钮
         self.btn_advanced_filter = QPushButton("▸ 高级筛选")
-        self.btn_advanced_filter.setFixedHeight(30)
-        self.btn_advanced_filter.setStyleSheet(f"font-size:{FS_SM}; color:{ACCENT}; border:none; background:transparent;")
-        self.btn_advanced_filter.setCursor(Qt.PointingHandCursor)
+        self.btn_advanced_filter.setFlat(True)
         self.btn_advanced_filter.clicked.connect(self._toggle_advanced_filter)
 
         self.btn_reset = QPushButton("清除筛选")
-        self.btn_reset.setFixedHeight(30)
-        self.btn_reset.setFixedWidth(80)
         self.btn_reset.clicked.connect(self._reset_filter)
 
         self.lbl_filter_hint = QLabel("")
-        self.lbl_filter_hint.setStyleSheet(f"color:{ACCENT}; font-size:{FS_SM}; font-weight:bold;")
 
-        filter_bar.addWidget(lbl_filter)
-        filter_bar.addWidget(lbl_y)
-        filter_bar.addWidget(self.combo_year)
-        filter_bar.addWidget(lbl_m)
-        filter_bar.addWidget(self.combo_month)
-        filter_bar.addSpacing(8)
         filter_bar.addWidget(self.btn_advanced_filter)
-        filter_bar.addSpacing(8)
         filter_bar.addWidget(self.btn_reset)
         filter_bar.addStretch()
         filter_bar.addWidget(self.lbl_filter_hint)
@@ -300,54 +275,40 @@ class InvoiceApp(QMainWindow):
         self._advanced_filter_frame.setVisible(False)
         adv_layout = QHBoxLayout(self._advanced_filter_frame)
         adv_layout.setContentsMargins(0, 0, 0, 0)
-        adv_layout.setSpacing(10)
+        adv_layout.setSpacing(8)
 
-        # 发票类型
-        lbl_type = QLabel("发票类型")
-        lbl_type.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        adv_layout.addWidget(QLabel("发票类型"))
         self.combo_inv_type = QComboBox()
         self.combo_inv_type.setMinimumWidth(100)
-        self.combo_inv_type.setFixedHeight(30)
-        self.combo_inv_type.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_inv_type.addItem("全部", None)
 
-        # 销售方名称
-        lbl_seller = QLabel("销售方")
-        lbl_seller.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        adv_layout.addWidget(QLabel("销售方"))
         self.combo_seller = QComboBox()
         self.combo_seller.setMinimumWidth(120)
-        self.combo_seller.setFixedHeight(30)
-        self.combo_seller.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.combo_seller.addItem("全部", None)
 
         self.combo_inv_type.currentIndexChanged.connect(self._apply_filter)
         self.combo_seller.currentIndexChanged.connect(self._apply_filter)
 
-        # 购买方名称/税号搜索
-        lbl_buyer_search = QLabel("购买方")
-        lbl_buyer_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        adv_layout.addWidget(QLabel("购买方"))
         self.edit_buyer_search = QLineEdit()
         self.edit_buyer_search.setPlaceholderText("名称或税号")
-        self.edit_buyer_search.setMinimumWidth(120)
-        self.edit_buyer_search.setFixedHeight(30)
+        self.edit_buyer_search.setMinimumWidth(100)
         self.edit_buyer_search.textChanged.connect(lambda: self._filter_timer.start(300))
 
-        # 标签搜索
-        lbl_company_search = QLabel("标签")
-        lbl_company_search.setStyleSheet(f"font-size:{FS_SM}; color:{TEXT_SEC};")
+        adv_layout.addWidget(QLabel("标签"))
         self.edit_company_search = QLineEdit()
         self.edit_company_search.setPlaceholderText("输入标签搜索")
         self.edit_company_search.setMinimumWidth(100)
-        self.edit_company_search.setFixedHeight(30)
         self.edit_company_search.textChanged.connect(lambda: self._filter_timer.start(300))
 
-        adv_layout.addWidget(lbl_type)
+        adv_layout.addWidget(QLabel("发票类型"))
         adv_layout.addWidget(self.combo_inv_type, 1)
-        adv_layout.addWidget(lbl_seller)
+        adv_layout.addWidget(QLabel("销售方"))
         adv_layout.addWidget(self.combo_seller, 1)
-        adv_layout.addWidget(lbl_buyer_search)
+        adv_layout.addWidget(QLabel("购买方"))
         adv_layout.addWidget(self.edit_buyer_search, 2)
-        adv_layout.addWidget(lbl_company_search)
+        adv_layout.addWidget(QLabel("标签"))
         adv_layout.addWidget(self.edit_company_search, 2)
         adv_layout.addStretch()
         main_layout.addWidget(self._advanced_filter_frame)
@@ -363,12 +324,11 @@ class InvoiceApp(QMainWindow):
         # ── 统计汇总栏 ───────────────────────────
         self.summary_frame = QFrame()
         self.summary_frame.setFrameShape(QFrame.StyledPanel)
-        self.summary_frame.setStyleSheet(SUMMARY_FRAME_QSS)
         sum_layout = QHBoxLayout(self.summary_frame)
         sum_layout.setContentsMargins(0, 0, 0, 0)
         sum_layout.setSpacing(0)
 
-        self.lbl_count     = self._stat_label("发票总数", "0 张", accent=True)
+        self.lbl_count     = self._stat_label("发票总数", "0 张")
         self.lbl_total_amt = self._stat_label("金额合计", "¥ 0.00")
         self.lbl_total_tax = self._stat_label("税额合计", "¥ 0.00")
         self.lbl_total_all = self._stat_label("价税合计", "¥ 0.00")
@@ -379,7 +339,6 @@ class InvoiceApp(QMainWindow):
             if i < len(stat_widgets) - 1:
                 sep = QFrame()
                 sep.setFrameShape(QFrame.VLine)
-                sep.setStyleSheet(f"color:{BORDER_LIGHT};")
                 sum_layout.addWidget(sep)
         main_layout.addWidget(self.summary_frame)
 
@@ -437,8 +396,7 @@ class InvoiceApp(QMainWindow):
         self._freeze_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._freeze_table.setSelectionMode(QAbstractItemView.NoSelection)
         self._freeze_table.setStyleSheet(
-            TABLE_QSS +
-            "QTableWidget { border: none; border-left: 1px solid " + BORDER_LIGHT + "; }"
+            "QTableWidget { border: none; }"
             "QHeaderView::section { border-right: none; }"
         )
         self._freeze_table.hide()
@@ -455,10 +413,6 @@ class InvoiceApp(QMainWindow):
         self._empty_overlay = QLabel(self.table.viewport())
         self._empty_overlay.setAlignment(Qt.AlignCenter)
         self._empty_overlay.setWordWrap(True)
-        self._empty_overlay.setStyleSheet(
-            f"color:{TEXT_DIM}; font-size:13px; background:transparent;"
-            "padding:40px;"
-        )
         self._empty_overlay.setText(
             "拖拽 PDF 文件到此处导入发票\n"
             "或点击「打开」按钮选择文件"
@@ -475,79 +429,51 @@ class InvoiceApp(QMainWindow):
 
         # ── 全局搜索条（默认隐藏）────────────────────
         self._search_bar = QWidget(self)
-        self._search_bar.setObjectName("searchBar")
         search_layout = QHBoxLayout(self._search_bar)
-        search_layout.setContentsMargins(8, 4, 8, 4)
-        search_layout.setSpacing(6)
-
-        search_icon = QLabel("🔍")
-        search_icon.setStyleSheet("font-size:14px; background:transparent;")
+        search_layout.setContentsMargins(4, 2, 4, 2)
+        search_layout.setSpacing(4)
 
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("输入搜索关键词，搜索所有字段…")
-        self._search_input.setFixedHeight(32)
+        self._search_input.setPlaceholderText("搜索…")
 
         self._search_count = QLabel("")
-        self._search_count.setStyleSheet(f"color:{TEXT_SEC}; font-size:12px; background:transparent;")
 
         btn_search_close = QPushButton("✕")
-        btn_search_close.setFixedSize(24, 24)
-        btn_search_close.setStyleSheet("border:none; background:transparent; font-size:14px; color:" + TEXT_DIM + ";")
+        btn_search_close.setFlat(True)
         btn_search_close.clicked.connect(self._close_search)
 
         btn_search_prev = QPushButton("▲")
-        btn_search_prev.setFixedSize(24, 24)
+        btn_search_prev.setFlat(True)
         btn_search_prev.setToolTip("上一个匹配")
-        btn_search_prev.setStyleSheet("border:none; background:transparent; font-size:12px; color:" + ACCENT + ";")
         btn_search_prev.clicked.connect(self._prev_search_match)
 
         btn_search_next = QPushButton("▼")
-        btn_search_next.setFixedSize(24, 24)
+        btn_search_next.setFlat(True)
         btn_search_next.setToolTip("下一个匹配")
-        btn_search_next.setStyleSheet("border:none; background:transparent; font-size:12px; color:" + ACCENT + ";")
         btn_search_next.clicked.connect(self._next_search_match)
 
-        search_layout.addWidget(search_icon)
+        search_layout.addWidget(QLabel("🔍"))
         search_layout.addWidget(self._search_input, 1)
         search_layout.addWidget(btn_search_prev)
         search_layout.addWidget(btn_search_next)
         search_layout.addWidget(self._search_count)
         search_layout.addWidget(btn_search_close)
 
-        self._search_bar.setStyleSheet(
-            f"QWidget#searchBar {{ background:{ACCENT}; border-radius:6px; }}"
-        )
-        self._search_bar.setGeometry(self.width() - 420, 8, 400, 40)
+        self._search_bar.setGeometry(self.width() - 360, 8, 350, 32)
         self._search_bar.hide()
 
-        self._set_global_style()
         self._save_locked = False
         self.table.cellChanged.connect(self._on_cell_changed)
         self.table.clicked.connect(self._on_table_clicked)
-        # 安装 viewport 事件过滤器：点击已选中行取消选中
         self.table.viewport().installEventFilter(self)
 
-        # 全局按钮手型光标
-        for btn in self.findChildren(QPushButton):
-            btn.setCursor(Qt.PointingHandCursor)
-
-    def _stat_label(self, title, value, accent=False):
+    def _stat_label(self, title, value):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(20, 12, 20, 12)
-        v.setSpacing(4)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(2)
         lbl_t = QLabel(title)
-        lbl_t.setStyleSheet(
-            f"color:{TEXT_SEC}; font-size:{FS_SM}; background:transparent; "
-            f"font-weight:500; letter-spacing:0.5px;"
-        )
         lbl_v = QLabel(value)
-        color = ACCENT if accent else TEXT
-        size = "20px" if accent else "17px"
-        lbl_v.setStyleSheet(
-            f"color:{color}; font-size:{size}; font-weight:600; "
-            f"background:transparent; font-family:'Consolas';"
-        )
         v.addWidget(lbl_t)
         v.addWidget(lbl_v)
         w._value_label = lbl_v
@@ -572,10 +498,6 @@ class InvoiceApp(QMainWindow):
             raw[remainders[i][0]] += 1
         for col, w in raw.items():
             self.table.setColumnWidth(col, w)
-
-    def _set_global_style(self):
-        from ui.theme import GLOBAL_QSS
-        self.setStyleSheet(GLOBAL_QSS)
 
     def _set_app_icon(self):
         from PyQt5.QtGui import QIcon
@@ -959,10 +881,6 @@ class InvoiceApp(QMainWindow):
         if not hasattr(self, '_drop_overlay'):
             self._drop_overlay = QLabel(self)
             self._drop_overlay.setAlignment(Qt.AlignCenter)
-            self._drop_overlay.setStyleSheet(
-                "background: rgba(30, 111, 191, 200); color: white; "
-                "font-size: 18px; font-weight: bold; border-radius: 12px;"
-            )
         pdf_count = sum(1 for u in urls if u.toLocalFile().lower().endswith('.pdf'))
         other_count = len(urls) - pdf_count
         parts = []
@@ -1240,7 +1158,6 @@ class InvoiceApp(QMainWindow):
             return
         freeze.setRowCount(len(shown))
         freeze.horizontalHeader().setFixedHeight(self.table.horizontalHeader().height())
-        btn_style = "font-size:11px; padding:0 4px; border:none; background:transparent;"
 
         for i, rec in enumerate(shown):
             freeze.setRowHeight(i, self.table.rowHeight(i))
@@ -1252,16 +1169,12 @@ class InvoiceApp(QMainWindow):
             pdf_path = rec.get("pdf_path", "")
             if pdf_path and os.path.exists(pdf_path):
                 btn_pdf = QPushButton("查看")
-                btn_pdf.setFixedHeight(22)
-                btn_pdf.setStyleSheet(btn_style + f"color:{ACCENT};")
-                btn_pdf.setCursor(Qt.PointingHandCursor)
+                btn_pdf.setFlat(True)
                 btn_pdf.clicked.connect(self._make_pdf_handler(rec))
                 lay.addWidget(btn_pdf)
 
             btn_del = QPushButton("删除")
-            btn_del.setFixedHeight(22)
-            btn_del.setStyleSheet(btn_style + f"color:{TEXT_DIM};")
-            btn_del.setCursor(Qt.PointingHandCursor)
+            btn_del.setFlat(True)
             btn_del.clicked.connect(self._make_delete_handler(rec))
             lay.addWidget(btn_del)
             lay.addStretch()
@@ -1316,50 +1229,27 @@ class InvoiceApp(QMainWindow):
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(3)
 
-        # 统一的图标按钮风格：圆角矩形+主题色边框+hover高亮
-        btn_style = (
-            "QPushButton {{"
-            "  border:1px solid {border}; background:{bg}; color:{fg};"
-            "  border-radius:3px; font-size:12px; font-weight:bold;"
-            "  padding:0;"
-            "}}"
-            "QPushButton:hover {{ background:{hover}; border-color:{accent}; }}"
-        )
-
         if attachments:
             btn_v = QPushButton()
             btn_v.setIcon(get_icon('paperclip'))
             btn_v.setIconSize(QtCore.QSize(14, 14))
             btn_v.setText(f"  {len(attachments)}")
-            btn_v.setFixedHeight(22)
-            btn_v.setCursor(Qt.PointingHandCursor)
+            btn_v.setFlat(True)
             btn_v.setToolTip(f"共 {len(attachments)} 个附件，点击查看")
-            btn_v.setStyleSheet(btn_style.format(
-                border=BORDER, bg=WHITE, fg=TEXT, hover=ACCENT_LIGHT, accent=ACCENT
-            ))
             btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
             lay.addWidget(btn_v)
         else:
             btn_v = QPushButton()
             btn_v.setIcon(get_icon('paperclip'))
             btn_v.setIconSize(QtCore.QSize(14, 14))
-            btn_v.setFixedSize(22, 22)
-            btn_v.setCursor(Qt.PointingHandCursor)
-            btn_v.setToolTip("暂无附件")
-            btn_v.setStyleSheet(btn_style.format(
-                border=BORDER_LIGHT, bg="transparent", fg=TEXT_DIM,
-                hover=ACCENT_LIGHT, accent=ACCENT
-            ))
+            btn_v.setFlat(True)
             btn_v.setEnabled(False)
+            btn_v.setToolTip("暂无附件")
             lay.addWidget(btn_v)
 
         btn_add = QPushButton("+")
-        btn_add.setFixedSize(22, 22)
+        btn_add.setFlat(True)
         btn_add.setToolTip("添加附件（支持拖拽）")
-        btn_add.setCursor(Qt.PointingHandCursor)
-        btn_add.setStyleSheet(btn_style.format(
-            border=BORDER, bg=WHITE, fg=ACCENT, hover=ACCENT_LIGHT, accent=ACCENT
-        ))
         btn_add.clicked.connect(lambda _, r=row: self._add_attachment(r))
         lay.addWidget(btn_add)
         lay.addStretch()
