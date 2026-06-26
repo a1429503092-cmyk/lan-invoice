@@ -67,6 +67,11 @@ class McpServer:
             try:
                 req = json.loads(line.strip())
             except json.JSONDecodeError:
+                sys.stdout.write(json.dumps({
+                    "jsonrpc": "2.0", "id": None,
+                    "error": {"code": -32700, "message": "Parse error"}
+                }) + "\n")
+                sys.stdout.flush()
                 continue
             resp = self._handle(req)
             if resp is not None:
@@ -248,7 +253,7 @@ class McpServer:
         sort_by = args.get("sort_by")
         if sort_by:
             if sort_by not in VALID_SORT_FIELDS:
-                return {"error": f"不支持的排序字段: {sort_by}"}
+                raise ValueError(f"不支持的排序字段: {sort_by}")
             asc = args.get("sort_asc", True)
             numeric = sort_by in ("amount", "tax_rate", "tax_amount", "total")
             if numeric:
@@ -263,9 +268,9 @@ class McpServer:
         return {
             "count": len(filtered),
             "returned": len(page),
-            "total_amount": sum(safe_float(r.get("amount")) for r in page),
-            "total_tax": sum(safe_float(r.get("tax_amount")) for r in page),
-            "total_with_tax": sum(safe_float(r.get("total")) for r in page),
+            "total_amount": sum(safe_float(r.get("amount")) for r in filtered),
+            "total_tax": sum(safe_float(r.get("tax_amount")) for r in filtered),
+            "total_with_tax": sum(safe_float(r.get("total")) for r in filtered),
             "records": page,
         }
 
@@ -309,15 +314,14 @@ class McpServer:
 
         from services.export_service import ExportService
         invs = self._db.load()
-        # 应用筛选
         year = args.get("year")
         month = args.get("month")
         inv_type = args.get("invoice_type")
         seller = args.get("seller")
         if any([year, month, inv_type, seller]):
             invs = [i for i in invs if record_matches_filter(i, year, month, inv_type, seller, "", "")]
-        tag_templates = self._config.tag_templates
-        ExportService.export(invs, output, tag_templates)
+        svc = ExportService()
+        svc.export(invs, output, tag_columns=self._config.tag_templates)
         return {"status": "ok", "path": output}
 
     def _get_summary(self, args):
@@ -334,9 +338,9 @@ class McpServer:
 
         return {
             "count": len(invs),
-            "total_amount": sum(safe_float(i.amount) for i in invs),
-            "total_tax": sum(safe_float(i.tax_amount) for i in invs),
-            "total_with_tax": sum(safe_float(i.total) for i in invs),
+            "total_amount": sum(safe_float(i.amount) for i in invs) or 0.0,
+            "total_tax": sum(safe_float(i.tax_amount) for i in invs) or 0.0,
+            "total_with_tax": sum(safe_float(i.total) for i in invs) or 0.0,
             "by_type": types,
         }
 
