@@ -3,6 +3,7 @@
 
 import sys
 import os
+import re
 import json
 import shutil
 from datetime import datetime
@@ -42,6 +43,8 @@ class McpServer:
             "export_excel": self._export_excel,
             "get_summary": self._get_summary,
             "manage_tags": self._manage_tags,
+            "update_invoice": self._update_invoice,
+            "add_attachment": self._add_attachment,
             "delete_invoice": self._delete_invoice,
             "check_update": self._check_update,
         }
@@ -176,6 +179,31 @@ class McpServer:
                         "tag_name": {"type": "string", "description": "add/delete 时使用"},
                     },
                     "required": ["action"]
+                }
+            },
+            {
+                "name": "update_invoice",
+                "description": "修改发票记录的字段：标签值（如企业号、项目名称）和备注。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "invoice_no": {"type": "string", "description": "发票号码"},
+                        "tags": {"type": "object", "description": "要设置的标签键值对，如 {\"企业号\": \"14786\", \"项目名称\": \"Q1\"}"},
+                        "remark": {"type": "string", "description": "备注内容"},
+                    },
+                    "required": ["invoice_no"]
+                }
+            },
+            {
+                "name": "add_attachment",
+                "description": "给指定发票添加附件（截图、文档等文件）。文件会被复制到数据目录。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "invoice_no": {"type": "string", "description": "发票号码"},
+                        "file_paths": {"type": "array", "items": {"type": "string"}, "description": "要添加为附件的文件路径列表"},
+                    },
+                    "required": ["invoice_no", "file_paths"]
                 }
             },
             {
@@ -372,6 +400,79 @@ class McpServer:
             self._config.save()
             return {"tags": templates, "message": f"已删除标签「{name}」"}
         return {"error": f"未知操作: {action}"}
+
+    def _update_invoice(self, args):
+        inv_no = (args.get("invoice_no") or "").strip()
+        if not inv_no:
+            return {"error": "缺少必填参数: invoice_no"}
+        invs = self._db.load()
+        target = None
+        for inv in invs:
+            if inv.invoice_no == inv_no:
+                target = inv
+                break
+        if not target:
+            return {"error": f"未找到发票号 {inv_no}"}
+
+        changed = []
+        tags = args.get("tags")
+        if tags and isinstance(tags, dict):
+            if not target.tags:
+                target.tags = {}
+            for k, v in tags.items():
+                target.tags[k] = str(v) if v else ""
+            changed.append("tags")
+        remark = args.get("remark")
+        if remark is not None:
+            target.remark = str(remark)
+            changed.append("remark")
+
+        if not changed:
+            return {"message": "无变更", "invoice": self._inv_to_dict(target)}
+        self._db.save(invs)
+        self._backup.backup(self._db.data_file)
+        return {"status": "ok", "changed": changed, "invoice": self._inv_to_dict(target)}
+
+    def _add_attachment(self, args):
+        inv_no = (args.get("invoice_no") or "").strip()
+        paths = args.get("file_paths") or []
+        if not inv_no:
+            return {"error": "缺少必填参数: invoice_no"}
+        if not paths:
+            return {"error": "缺少必填参数: file_paths"}
+
+        invs = self._db.load()
+        target = None
+        for inv in invs:
+            if inv.invoice_no == inv_no:
+                target = inv
+                break
+        if not target:
+            return {"error": f"未找到发票号 {inv_no}"}
+
+        valid = [p for p in paths if os.path.isfile(p)]
+        if not valid:
+            return {"error": "没有有效的文件"}
+
+        from services.invoice_service import InvoiceService
+        added = InvoiceService._attachment_namer
+        inv_no_safe = re.sub(r'[\\/:*?"<>|]', '_', inv_no)
+        count = 0
+        for src in valid:
+            dst = os.path.join(self._data_dir, added(src, inv_no_safe))
+            try:
+                shutil.copy2(src, dst)
+                if not target.attachments:
+                    target.attachments = []
+                target.attachments.append(dst)
+                count += 1
+            except OSError:
+                continue
+
+        if count:
+            self._db.save(invs)
+            self._backup.backup(self._db.data_file)
+        return {"status": "ok", "added": count, "total_attachments": len(target.attachments or [])}
 
     def _delete_invoice(self, args):
         inv_no = args.get("invoice_no", "")
