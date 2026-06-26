@@ -236,7 +236,7 @@ class McpServer:
 
     def _search_invoices(self, args):
         invs = self._db.load()
-        keyword = args.get("keyword", "").lower()
+        keyword = (args.get("keyword") or "").lower()
 
         filtered = []
         for inv in invs:
@@ -296,7 +296,10 @@ class McpServer:
         # 复制 PDF 到 data/invoices/（处理重名）
         dst_dir = os.path.join(self._data_dir, "invoices")
         os.makedirs(dst_dir, exist_ok=True)
-        inv.pdf_path = copy_file_to_dir(pdf_path, dst_dir)
+        copied = copy_file_to_dir(pdf_path, dst_dir)
+        if copied == pdf_path:
+            return {"error": f"PDF 文件复制失败，磁盘可能已满或无写入权限"}
+        inv.pdf_path = copied
 
         existing.append(inv)
         self._db.save(existing)
@@ -351,7 +354,7 @@ class McpServer:
         templates = self._config.tag_templates
         if action == "list":
             return {"tags": templates}
-        name = args.get("tag_name", "").strip()
+        name = (args.get("tag_name") or "").strip()
         if not name:
             return {"error": "tag_name 不能为空"}
         if action == "add":
