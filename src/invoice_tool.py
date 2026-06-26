@@ -212,11 +212,6 @@ class InvoiceApp(QMainWindow):
         self.btn_open.setToolTip("选择一个或多个PDF发票文件（也可直接拖拽PDF到窗口）")
         self.btn_open.clicked.connect(self.open_files)
 
-        self.btn_clear = QPushButton(" 清空列表")
-        self.btn_clear.setIcon(get_icon('clear'))
-        self.btn_clear.setFixedHeight(36)
-        self.btn_clear.clicked.connect(self.clear_records)
-
         self.btn_settings = QPushButton(" 设置")
         self.btn_settings.setIcon(get_icon('settings'))
         self.btn_settings.setFixedHeight(36)
@@ -229,7 +224,6 @@ class InvoiceApp(QMainWindow):
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
-        top_bar.addWidget(self.btn_clear)
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
         top_bar.addSpacing(12)
@@ -1480,6 +1474,8 @@ class InvoiceApp(QMainWindow):
         menu.addSeparator()
 
         menu.addAction(get_icon('delete'), "删除选中行", self._delete_selected_rows)
+        menu.addSeparator()
+        menu.addAction(get_icon('clear'), "清空列表…", self.clear_records)
         menu.exec_(self.table.viewport().mapToGlobal(pos))
 
     def _selected_rows(self):
