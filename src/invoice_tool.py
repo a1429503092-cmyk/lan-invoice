@@ -809,7 +809,7 @@ class InvoiceApp(QMainWindow):
             self._sync_records_from_table()
             self._db.save(self.records)
             log.debug("数据已保存: %d 条", len(self.records))
-        except OSError as e:
+        except Exception as e:
             log.error("数据保存失败: %s", e)
             self.status.showMessage(f"数据保存失败: {e}")
             return
