@@ -4,18 +4,25 @@
 import sys
 import os
 import json
-import sqlite3
 import shutil
 from datetime import datetime
 
 from models import Invoice
 from invoice_parser import parse_invoice_pdf
-from filters import record_matches_filter, get_available_years, get_available_inv_types, get_available_sellers
+from filters import record_matches_filter
 from database import Database
 from backup import BackupService
 from config_manager import ConfigManager
-from utils import safe_float
+from utils import safe_float, copy_file_to_dir
 from version import APP_VERSION
+
+# Windows 下 stdout 默认非 UTF-8，包含中文内容时会崩溃
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+VALID_SORT_FIELDS = {"amount", "tax_rate", "tax_amount", "total",
+                     "invoice_no", "invoice_date", "invoice_type",
+                     "buyer_name", "seller_name", "file"}
 
 
 class McpServer:
@@ -202,16 +209,11 @@ class McpServer:
             data = [self._inv_to_dict(inv) for inv in self._db.load()]
             return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(data, ensure_ascii=False)}]}
         if uri == "invoices://summary":
-            invs = self._db.load()
-            return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps({
-                "count": len(invs),
-                "total_amount": sum(safe_float(i.amount) for i in invs),
-                "total_tax": sum(safe_float(i.tax_amount) for i in invs),
-                "total_with_tax": sum(safe_float(i.total) for i in invs),
-            }, ensure_ascii=False)}]}
+            return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(
+                self._get_summary({}), ensure_ascii=False)}]}
         if uri == "invoices://tags":
             return {"contents": [{"uri": uri, "mimeType": "application/json", "text": json.dumps(self._config.tag_templates, ensure_ascii=False)}]}
-        return self._error(None, -32002, f"Unknown resource: {uri}")
+        return {"contents": [{"uri": uri, "mimeType": "text/plain", "text": f"Unknown resource: {uri}"}]}
 
     # ── 工具实现 ──────────────────────────────────
 
@@ -220,7 +222,7 @@ class McpServer:
         args = params.get("arguments", {})
         fn = self._tools.get(name)
         if not fn:
-            return self._error(None, -32601, f"Unknown tool: {name}")
+            return {"content": [{"type": "text", "text": json.dumps({"error": f"Unknown tool: {name}"}, ensure_ascii=False)}], "isError": True}
         try:
             result = fn(args)
             return {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}
@@ -229,54 +231,24 @@ class McpServer:
 
     def _search_invoices(self, args):
         invs = self._db.load()
-        year = args.get("year")
-        month = args.get("month")
-        inv_type = args.get("invoice_type")
-        seller = args.get("seller")
-        buyer = args.get("buyer")
-        tag = args.get("tag")
         keyword = args.get("keyword", "").lower()
 
         filtered = []
         for inv in invs:
-            d = self._inv_to_dict(inv)
-            # 年月筛选
-            date = inv.invoice_date or ""
-            if year and str(year) not in date:
+            if not record_matches_filter(inv, args.get("year"), args.get("month"),
+                                         args.get("invoice_type"), args.get("seller"),
+                                         args.get("buyer", ""), args.get("tag", "")):
                 continue
-            if month and f"{month:02d}月" not in date:
-                continue
-            # 类型
-            if inv_type and inv_type not in (inv.invoice_type or ""):
-                continue
-
-            if seller and seller.lower() not in (inv.seller_name or "").lower():
-                continue
-            if buyer:
-                b = buyer.lower()
-                if b not in (inv.buyer_name or "").lower() and b not in (
-                        inv.buyer_tax_id or "").lower():
-                    continue
-            # 标签搜索
-            if tag:
-                tags = inv.tags or {}
-                found = False
-                for v in tags.values():
-                    if tag.lower() in (v or "").lower():
-                        found = True
-                        break
-                if not found:
-                    continue
-            # 全文搜索
             if keyword:
-                full = json.dumps(d, ensure_ascii=False).lower()
+                full = json.dumps(self._inv_to_dict(inv), ensure_ascii=False).lower()
                 if keyword not in full:
                     continue
-            filtered.append(d)
+            filtered.append(self._inv_to_dict(inv))
 
-        # 排序
         sort_by = args.get("sort_by")
         if sort_by:
+            if sort_by not in VALID_SORT_FIELDS:
+                return {"error": f"不支持的排序字段: {sort_by}"}
             asc = args.get("sort_asc", True)
             numeric = sort_by in ("amount", "tax_rate", "tax_amount", "total")
             if numeric:
@@ -298,7 +270,9 @@ class McpServer:
         }
 
     def _import_invoice(self, args):
-        pdf_path = args["pdf_path"]
+        pdf_path = args.get("pdf_path", "")
+        if not pdf_path:
+            return {"error": "缺少必填参数: pdf_path"}
         if not os.path.exists(pdf_path):
             return {"error": f"文件不存在: {pdf_path}"}
         if not pdf_path.lower().endswith(".pdf"):
@@ -309,17 +283,15 @@ class McpServer:
             return {"parsed": result, "status": "parse_error"}
 
         inv = Invoice.from_dict(result)
+        inv.ensure_defaults()
         existing = self._db.load()
         if inv.invoice_no and any(i.invoice_no == inv.invoice_no for i in existing):
             return {"status": "duplicate", "invoice_no": inv.invoice_no, "message": f"发票号 {inv.invoice_no} 已存在"}
 
-        # 复制 PDF 到 data/invoices/
+        # 复制 PDF 到 data/invoices/（处理重名）
         dst_dir = os.path.join(self._data_dir, "invoices")
         os.makedirs(dst_dir, exist_ok=True)
-        dst = os.path.join(dst_dir, inv.file)
-        if not os.path.exists(dst):
-            shutil.copy2(pdf_path, dst)
-        inv.pdf_path = dst
+        inv.pdf_path = copy_file_to_dir(pdf_path, dst_dir)
 
         existing.append(inv)
         self._db.save(existing)
@@ -331,9 +303,19 @@ class McpServer:
         if not output:
             desktop = os.path.join(os.path.expanduser("~"), "Desktop")
             output = os.path.join(desktop, f"发票导出_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+        out_dir = os.path.dirname(output)
+        if out_dir and not os.path.isdir(out_dir):
+            return {"error": f"目录不存在: {out_dir}"}
 
         from services.export_service import ExportService
         invs = self._db.load()
+        # 应用筛选
+        year = args.get("year")
+        month = args.get("month")
+        inv_type = args.get("invoice_type")
+        seller = args.get("seller")
+        if any([year, month, inv_type, seller]):
+            invs = [i for i in invs if record_matches_filter(i, year, month, inv_type, seller, "", "")]
         tag_templates = self._config.tag_templates
         ExportService.export(invs, output, tag_templates)
         return {"status": "ok", "path": output}
@@ -342,33 +324,26 @@ class McpServer:
         invs = self._db.load()
         year = args.get("year")
         month = args.get("month")
-
-        filtered = invs
         if year or month:
-            filtered = []
-            for inv in invs:
-                date = inv.invoice_date or ""
-                if year and str(year) not in date:
-                    continue
-                if month and f"{month:02d}月" not in date:
-                    continue
-                filtered.append(inv)
+            invs = [i for i in invs if record_matches_filter(i, year, month, None, None, "", "")]
 
         types = {}
-        for inv in filtered:
+        for inv in invs:
             t = inv.invoice_type or "未知"
             types[t] = types.get(t, 0) + 1
 
         return {
-            "count": len(filtered),
-            "total_amount": sum(safe_float(i.amount) for i in filtered),
-            "total_tax": sum(safe_float(i.tax_amount) for i in filtered),
-            "total_with_tax": sum(safe_float(i.total) for i in filtered),
+            "count": len(invs),
+            "total_amount": sum(safe_float(i.amount) for i in invs),
+            "total_tax": sum(safe_float(i.tax_amount) for i in invs),
+            "total_with_tax": sum(safe_float(i.total) for i in invs),
             "by_type": types,
         }
 
     def _manage_tags(self, args):
-        action = args["action"]
+        action = args.get("action", "")
+        if not action:
+            return {"error": "缺少必填参数: action"}
         templates = self._config.tag_templates
         if action == "list":
             return {"tags": templates}
@@ -392,7 +367,9 @@ class McpServer:
         return {"error": f"未知操作: {action}"}
 
     def _delete_invoice(self, args):
-        inv_no = args["invoice_no"]
+        inv_no = args.get("invoice_no", "")
+        if not inv_no:
+            return {"error": "缺少必填参数: invoice_no"}
         invs = self._db.load()
         target = None
         for inv in invs:
@@ -416,12 +393,13 @@ class McpServer:
         try:
             import http.client
             conn = http.client.HTTPSConnection("gitee.com", timeout=10)
+            conn.request("GET", "/api/v5/repos/GUYI33/lan-invoice/releases/latest")
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode())
+            conn.close()
         except Exception:
             return {"status": "offline", "message": "无法连接网络"}
-        conn.request("GET", "/api/v5/repos/GUYI33/lan-invoice/releases/latest")
-        resp = conn.getresponse()
-        data = json.loads(resp.read().decode())
-        conn.close()
+
         tag = data.get("tag_name", "").lstrip("v")
         latest = tag or "未知"
         newer = False
