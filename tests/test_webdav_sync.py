@@ -61,7 +61,8 @@ class TestSyncManifest(unittest.TestCase):
 
     def test_modified_file_detected(self):
         self._write("a.txt", "v1")
-        self.sync.scan(self.data)  # 记录 MD5
+        self.sync.scan(self.data)
+        self.sync.commit()
         self._write("a.txt", "v2")
         diff = self.sync.scan(self.data)
         self.assertIn("a.txt", diff["modified"])
@@ -72,6 +73,7 @@ class TestSyncManifest(unittest.TestCase):
     def test_deleted_file_detected(self):
         self._write("a.txt")
         self.sync.scan(self.data)
+        self.sync.commit()
         p = os.path.join(self.data, "a.txt")
         os.remove(p)
         diff = self.sync.scan(self.data)
@@ -82,6 +84,7 @@ class TestSyncManifest(unittest.TestCase):
     def test_no_change_no_diff(self):
         self._write("a.txt")
         self.sync.scan(self.data)
+        self.sync.commit()
         diff = self.sync.scan(self.data)
         self.assertEqual(diff["added"], [])
         self.assertEqual(diff["modified"], [])
@@ -93,6 +96,7 @@ class TestSyncManifest(unittest.TestCase):
         self._write("old.txt", "v1")
         self._write("mod.txt", "v1")
         self.sync.scan(self.data)
+        self.sync.commit()
 
         os.remove(os.path.join(self.data, "old.txt"))
         self._write("mod.txt", "v2")
@@ -111,7 +115,7 @@ class TestSyncManifest(unittest.TestCase):
     def test_save_and_load_manifest(self):
         self._write("a.txt", "hello")
         self.sync.scan(self.data)
-        self.sync.save()
+        self.sync.commit()
 
         s2 = SyncManifest(self.data)
         s2.load()
