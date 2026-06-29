@@ -11,18 +11,34 @@ uv run python src/invoice_tool.py
 
 ## 功能
 
+### 发票管理
 - 拖入 PDF 自动识别发票号、日期、购买方、销售方、金额/税率/税额
 - 标签系统：企业号、项目名称等自定义字段
-- 附件管理：截图、合同等文件关联到发票
+- 附件管理：截图、合同等文件关联到发票（悬停显示文件名列表）
+- 导入前预览去重：解析后展示新/重复/失败，可勾选导入
 - 多维筛选：年月/发票类型/销售方/购买方/标签/全文搜索
 - 一键导出 Excel（带格式、汇总行）
-- 数据自动备份到多个硬盘分区（隐藏目录，防误删）
 - Gitee 自动更新检查
-- MCP Server：AI 客户端直接操作发票数据库
+
+### 备份策略系统
+
+设置对话框内独立配置两套备份策略，各有触发时机 + 保留规则：
+
+| 策略 | 目标 | 触发时机 | 保留规则 |
+|------|------|---------|---------|
+| 本地多盘备份 | 所有固定硬盘隐藏目录 `.lan-invoice-backup` | 每次保存 / 定时 / 仅关闭 / 手动 | 最多 N 份 + 最少 N 份 + 保留 N 天 |
+| WebDAV 远程同步 | 群晖、Nextcloud 等 | 每次保存 / 定时 / 仅关闭 / 手动 | 增量覆盖 / 保留最近 N 个版本 |
+
+其他安全机制：
+- 备份前自动 `PRAGMA optimize` 清理数据库碎片
+- 退出时备份失败弹窗提醒
+- 目录切换前自动 ZIP 快照（存于系统临时目录）
+- 启动时 `PRAGMA integrity_check`，损坏则从备份自动恢复
+- 状态栏可见：备份份数、覆盖分区数、最近时间、总大小
 
 ## MCP Server
 
-发票工具提供 MCP stdio 接口，**Claude Code、Hermes 等 AI 客户端可直接控制**。
+发票工具提供 MCP stdio 接口，**Claude Code 等 AI 客户端可直接控制**。
 
 ### 配置
 
@@ -40,7 +56,7 @@ uv run python src/invoice_tool.py
 }
 ```
 
-如果 `cwd` 路径不对，改成你的项目实际路径。打包后用 EXE 路径：
+打包后用 EXE 路径：
 
 ```json
 {
@@ -55,17 +71,17 @@ uv run python src/invoice_tool.py
 
 ### 可用工具
 
-| 工具 | 说明 | 示例 |
-|------|------|------|
-| `search_invoices` | 多维度筛选、排序、分页 | "搜索 2025 年 1 月的增值税专用发票" |
-| `import_invoice` | 导入 PDF 发票 | "导入 D:/发票/xxx.pdf，企业号 14786" |
-| `export_excel` | 筛选后导出 Excel | "导出 2026 年 1 月发票到桌面" |
-| `get_summary` | 统计摘要（金额/税额/类型分布） | "本月发票总金额多少" |
-| `manage_tags` | 标签模板管理 | "添加标签'项目名称'" |
-| `update_invoice` | 修改发票标签和备注 | "给发票号 1234 备注'已对账'" |
-| `add_attachment` | 给发票添加附件 | "把 D:/截图/a.png 加到发票号 1234" |
-| `delete_invoice` | 删除发票记录 | "删除发票号 1234" |
-| `check_update` | 检查 Gitee 新版本 | "有新版本吗" |
+| 工具 | 说明 |
+|------|------|
+| `search_invoices` | 多维度筛选、排序、分页 |
+| `import_invoice` | 导入 PDF 发票，可附带标签和备注 |
+| `export_excel` | 筛选后导出 Excel |
+| `get_summary` | 统计摘要（金额/税额/类型分布） |
+| `manage_tags` | 标签模板管理（增/删/查） |
+| `update_invoice` | 修改发票标签和备注 |
+| `add_attachment` | 给发票添加附件（截图、文档等） |
+| `delete_invoice` | 删除发票记录及关联 PDF |
+| `check_update` | 检查 Gitee 新版本 |
 
 ### 使用示例（在 Claude Code 中）
 
@@ -79,7 +95,30 @@ uv run python src/invoice_tool.py
 > 给我 2026 年上半年（1-6月）的发票总金额和税额合计
 ```
 
-AI 会自动匹配合适的工具调用，无需手动指定。
+## HTTP API Server
+
+零额外依赖的标准库 REST API：
+
+```bash
+uv run python src/invoice_tool.py --http --port 8080
+```
+
+端点：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1` | 服务信息 + 端点列表 |
+| GET | `/api/v1/invoices?year=&type=&keyword=&sort_by=` | 搜索发票 |
+| GET | `/api/v1/invoices/{invoice_no}` | 获取单条 |
+| POST | `/api/v1/invoices/import` | 导入（JSON 或 multipart 上传） |
+| PUT | `/api/v1/invoices/{invoice_no}` | 更新标签/备注 |
+| DELETE | `/api/v1/invoices/{invoice_no}` | 删除发票 |
+| GET | `/api/v1/summary?year=&month=` | 统计摘要 |
+| GET | `/api/v1/tags` | 标签列表 |
+| POST | `/api/v1/tags` | 添加标签 |
+| DELETE | `/api/v1/tags/{tag_name}` | 删除标签 |
+| GET | `/api/v1/export?year=&type=` | 导出 Excel |
+| GET | `/api/v1/backup/status` | 备份统计 |
 
 ## 发布新版本
 
@@ -90,8 +129,19 @@ uv run python scripts/release.py
 
 脚本自动：递增版本号 → 构建 EXE → 打 tag 并推送 → 创建 Gitee Release 并上传 EXE。
 
+打包优化：PyInstaller 排除 17 个未使用的 Qt 模块（QtQuick/Qml/Multimedia 等），启用 `optimize=2` + `strip=True` + UPX 压缩。
+
 ## 数据存储
 
 - 主库：`%APPDATA%/lan-invoice/data/invoices.db`（SQLite WAL 模式）
+- 配置：`%APPDATA%/lan-invoice/config.json`（备份策略、标签模板、数据目录路径）
 - 备份：各分区根目录 `.lan-invoice-backup/data_TIMESTAMP/`（整个数据目录完整复制）
-- MD5 去重：同内容附件只存一份
+- 远程：WebDAV 增量同步（MD5 manifest 驱动，仅上传变更文件）
+
+## 架构
+
+```
+GUI (invoice_tool.py) ──┐
+MCP (mcp_server.py)    ──┼──> InvoiceService ──> Database + BackupService + ConfigManager
+HTTP (http_server.py)  ──┘       业务层统一         存储抽象（InvoiceStorage Protocol）
+```
