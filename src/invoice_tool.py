@@ -1895,5 +1895,10 @@ if __name__ == "__main__":
     if "--mcp" in sys.argv:
         from mcp_server import McpServer
         McpServer().run()
+    elif "--http" in sys.argv:
+        from http_server import run_server
+        port_idx = sys.argv.index("--port") + 1 if "--port" in sys.argv else -1
+        port = int(sys.argv[port_idx]) if port_idx > 0 and port_idx < len(sys.argv) else 8080
+        run_server(port)
     else:
         main()
