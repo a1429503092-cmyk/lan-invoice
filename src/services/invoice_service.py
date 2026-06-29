@@ -7,6 +7,7 @@ import json
 import shutil
 from datetime import datetime
 from models import Invoice
+from storage import InvoiceStorage
 from logger import getLogger
 
 log = getLogger(__name__)
@@ -19,8 +20,9 @@ VALID_SORT_FIELDS = {"amount", "tax_rate", "tax_amount", "total",
 class InvoiceService:
     """发票业务编排：CRUD、搜索、导出、附件、标签，统一写后备份"""
 
-    def __init__(self, db, backup, config, data_dir: str, invoice_dir: str):
-        self._db = db              # Database（load/save）
+    def __init__(self, db: InvoiceStorage, backup, config,
+                 data_dir: str, invoice_dir: str):
+        self._db = db
         self._backup = backup      # BackupService
         self._config = config      # ConfigManager
         self._data_dir = data_dir
@@ -78,9 +80,13 @@ class InvoiceService:
         pw = webdav_s["password"]
         data_dir = self._data_dir
 
+        vm = webdav_s["version_mode"]
+        mv = webdav_s["max_versions"]
+
         def run():
             try:
-                result = sync_to_webdav(data_dir, url, user, pw)
+                result = sync_to_webdav(data_dir, url, user, pw,
+                                        version_mode=vm, max_versions=mv)
                 if result.get("failed", 0) > 0:
                     log.warning("WebDAV 同步部分失败: %s", result)
             except Exception as e:

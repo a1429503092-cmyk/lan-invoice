@@ -90,8 +90,15 @@ def test_connection(webdav_url: str, username: str = "", password: str = "") -> 
 
 
 def sync_to_webdav(data_dir: str, webdav_url: str, username: str = "",
-                   password: str = "", progress: Callable[[str], None] = None) -> dict:
-    """增量同步数据目录到 WebDAV"""
+                   password: str = "", progress: Callable[[str], None] = None,
+                   version_mode: str = "incremental",
+                   max_versions: int = 10) -> dict:
+    """增量同步数据目录到 WebDAV
+
+    version_mode:
+      - "incremental": 增量覆盖，远程始终是最新快照
+      - "keep_versions": 每次同步上传到 versions/TIMESTAMP/，保留最近 N 版
+    """
     if not webdav_url:
         return {"error": "未配置 WebDAV"}
 
@@ -125,6 +132,15 @@ def sync_to_webdav(data_dir: str, webdav_url: str, username: str = "",
     report(f"同步 {total} 文件 (新增 {len(diff['added'])} "
            f"修改 {len(diff['modified'])} 删除 {len(diff['deleted'])})")
 
+    if version_mode == "keep_versions":
+        return _sync_with_versions(client, data_dir, diff, manifest, report,
+                                   max_versions)
+    return _sync_incremental(client, data_dir, diff, manifest, report)
+
+
+def _sync_incremental(client, data_dir: str, diff: dict, manifest: SyncManifest,
+                       report) -> dict:
+    """增量覆盖模式：直接上传/删除远程文件"""
     failed = 0
     for rel in diff["deleted"]:
         try:
@@ -137,7 +153,6 @@ def sync_to_webdav(data_dir: str, webdav_url: str, username: str = "",
         try:
             lp = os.path.join(data_dir, rel)
             if os.path.isfile(lp):
-                # force=True 自动递归创建远程子目录
                 client.upload_sync(remote_path=rel, local_path=lp)
         except Exception as e:
             log.warning("上传失败 %s: %s", rel, e)
@@ -154,6 +169,65 @@ def sync_to_webdav(data_dir: str, webdav_url: str, username: str = "",
 
     report(f"同步完成: {result}")
     return result
+
+
+def _sync_with_versions(client, data_dir: str, diff: dict, manifest: SyncManifest,
+                         report, max_versions: int) -> dict:
+    """保留版本模式：上传到 versions/TIMESTAMP/，保留最近 N 版"""
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_prefix = f"versions/{ts}/"
+
+    failed = 0
+    # 只上传增量和修改文件
+    for rel in diff["added"] + diff["modified"]:
+        try:
+            lp = os.path.join(data_dir, rel)
+            if os.path.isfile(lp):
+                client.upload_sync(remote_path=version_prefix + rel,
+                                   local_path=lp)
+        except Exception as e:
+            log.warning("版本上传失败 %s: %s", rel, e)
+            failed += 1
+
+    # 清理旧版本
+    clean_versions = 0
+    if failed == 0:
+        clean_versions = _clean_old_versions(client, max_versions)
+
+    result = {"added": len(diff["added"]), "modified": len(diff["modified"]),
+              "deleted": 0, "failed": failed, "version": ts,
+              "cleaned_versions": clean_versions}
+
+    if failed == 0:
+        manifest.commit()
+    else:
+        report(f"版本同步有 {failed} 个失败，清单未更新，下次重试")
+        manifest.rollback()
+
+    report(f"版本同步完成: {result}")
+    return result
+
+
+def _clean_old_versions(client, max_keep: int) -> int:
+    """清理远程旧版本目录，保留最近 max_keep 个"""
+    try:
+        entries = client.list(remote_path="versions/")
+        dirs = [e.rstrip("/") for e in entries if e and e.endswith("/")]
+    except Exception:
+        return 0
+
+    dirs.sort(reverse=True)
+    removed = 0
+    for d in dirs[max_keep:]:
+        try:
+            client.clean(remote_path=f"versions/{d}/")
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        log.info("清理 %d 个旧版本", removed)
+    return removed
 
 
 def restore_from_webdav(data_dir: str, webdav_url: str, username: str = "",

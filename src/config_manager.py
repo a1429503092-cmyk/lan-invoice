@@ -62,35 +62,36 @@ class ConfigManager:
 
     # ── 迁移 ──────────────────────────────────
 
-    def _migrate(self):
-        """旧配置迁移 → 新策略结构，只执行一次"""
-        if "backup_strategies" in self._data:
-            self._migrate_webdav_fields()
-            return
-        strategies = {}
-        # 迁移旧 backup_enabled → local 策略
-        old_enabled = self._data.pop("backup_enabled", True)
-        strategies["local"] = dict(DEFAULT_LOCAL_STRATEGY, enabled=old_enabled)
-        # 迁移旧 webdav_* → webdav 策略
-        wd_url = self._data.pop("webdav_url", "") or ""
-        wd_enabled = bool(self._data.pop("webdav_enabled", False) or wd_url)
-        strategies["webdav"] = dict(
-            DEFAULT_WEBDAV_STRATEGY,
-            enabled=wd_enabled,
-            url=wd_url,
-            username=self._data.pop("webdav_username", "") or "",
-            password=self._data.pop("webdav_password", "") or "",
-        )
-        self._data["backup_strategies"] = strategies
-        log.info("配置已迁移到策略结构: local=%s webdav=%s",
-                 strategies["local"]["enabled"], strategies["webdav"]["enabled"])
-        self.save()
+    _CONFIG_VERSION = 1  # 当前配置格式版本
 
-    def _migrate_webdav_fields(self):
-        """清理可能残留的旧 webdav_* 字段（已在 strategies 中）"""
+    def _migrate(self):
+        """旧配置迁移 → 新策略结构，按版本号跳过已完成迁移"""
+        version = self._data.get("config_version", 0)
+        if version >= self._CONFIG_VERSION:
+            return
+        # v0 → v1: backup_enabled / webdav_* → backup_strategies
+        if "backup_strategies" not in self._data:
+            strategies = {}
+            old_enabled = self._data.pop("backup_enabled", True)
+            strategies["local"] = dict(DEFAULT_LOCAL_STRATEGY, enabled=old_enabled)
+            wd_url = self._data.pop("webdav_url", "") or ""
+            wd_enabled = bool(self._data.pop("webdav_enabled", False) or wd_url)
+            strategies["webdav"] = dict(
+                DEFAULT_WEBDAV_STRATEGY,
+                enabled=wd_enabled,
+                url=wd_url,
+                username=self._data.pop("webdav_username", "") or "",
+                password=self._data.pop("webdav_password", "") or "",
+            )
+            self._data["backup_strategies"] = strategies
+            log.info("配置已迁移到策略结构: local=%s webdav=%s",
+                     strategies["local"]["enabled"], strategies["webdav"]["enabled"])
+        # 清理可能残留的旧字段
         for key in ("webdav_url", "webdav_username", "webdav_password",
                      "webdav_enabled", "backup_enabled"):
             self._data.pop(key, None)
+        self._data["config_version"] = self._CONFIG_VERSION
+        self.save()
 
     # ── 备份策略 ─────────────────────────────
 

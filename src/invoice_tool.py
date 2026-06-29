@@ -1056,10 +1056,13 @@ class InvoiceApp(QMainWindow):
         user = webdav_s["username"]
         pw = webdav_s["password"]
         data_dir = self._data_dir
+        vm = webdav_s["version_mode"]
+        mv = webdav_s["max_versions"]
 
         def run():
             try:
-                result = sync_to_webdav(data_dir, url, user, pw)
+                result = sync_to_webdav(data_dir, url, user, pw,
+                                        version_mode=vm, max_versions=mv)
                 if result.get("failed", 0) > 0:
                     log.warning("WebDAV 同步部分失败: %s", result)
             except Exception as e:
