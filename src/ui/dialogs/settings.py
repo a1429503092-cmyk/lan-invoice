@@ -161,14 +161,26 @@ class SettingsDialog(QDialog):
         # ══════ 本地多盘备份 ══════
         layout.addWidget(self._section_title("本地多盘备份"))
 
-        self._build_strategy_card("local", layout)
+        from ui.widgets.strategy_card import StrategyCard
+        self._local_card = StrategyCard("local", self._app._config.get_local_strategy())
+        self._local_card.strategy_changed.connect(self._on_local_strategy_changed)
+        layout.addWidget(self._local_card)
+
+        # 本地备份状态
+        self.lbl_local_stats = QLabel()
+        self.lbl_local_stats.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        self.lbl_local_stats.setWordWrap(True)
+        layout.addWidget(self.lbl_local_stats)
+        self._refresh_local_stats()
 
         layout.addWidget(self._hline())
 
         # ══════ WebDAV 远程备份 ══════
         layout.addWidget(self._section_title("远程备份（WebDAV）"))
 
-        self._build_strategy_card("webdav", layout)
+        self._webdav_card = StrategyCard("webdav", self._app._config.get_webdav_strategy())
+        self._webdav_card.strategy_changed.connect(self._on_webdav_strategy_changed)
+        layout.addWidget(self._webdav_card)
 
         # WebDAV 专属：地址和认证
         wd_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
@@ -254,182 +266,17 @@ class SettingsDialog(QDialog):
     def _check_update(self):
         self._app.check_update()
 
-    # ── 策略卡片构建 ─────────────────────────────
+    # ── 策略卡片事件 ─────────────────────────────
 
-    TRIGGER_LABELS = {
-        "on_save": "每次保存时",
-        "scheduled": "定时",
-        "on_close": "仅关闭时",
-        "manual": "纯手动",
-    }
-
-    def _build_strategy_card(self, key: str, layout: QVBoxLayout):
-        """构建一个备份策略卡片（local 或 webdav）"""
-        if key == "local":
-            s = self._app._config.get_local_strategy()
-        else:
-            s = self._app._config.get_webdav_strategy()
-
-        # 启用开关
-        cb_label = "本地多盘备份" if key == "local" else "WebDAV 远程同步"
-        cb = QCheckBox(cb_label)
-        cb.setChecked(s["enabled"])
-        setattr(self, f"cb_{key}_enabled", cb)
-        if key == "local":
-            cb.toggled.connect(self._on_local_enabled)
-        else:
-            cb.toggled.connect(self._on_webdav_enabled)
-        layout.addWidget(cb)
-
-        # 触发时机行
-        trig_row = QHBoxLayout()
-        trig_row.setSpacing(8)
-        trig_row.addWidget(QLabel("触发时机"))
-        cmb_trigger = QComboBox()
-        for val, label in self.TRIGGER_LABELS.items():
-            cmb_trigger.addItem(label, val)
-        idx = cmb_trigger.findData(s["trigger"])
-        if idx >= 0:
-            cmb_trigger.setCurrentIndex(idx)
-        setattr(self, f"cmb_{key}_trigger", cmb_trigger)
-        cmb_trigger.currentIndexChanged.connect(
-            lambda: self._on_strategy_changed(key))
-        trig_row.addWidget(cmb_trigger, 1)
-        layout.addLayout(trig_row)
-
-        # 定时间隔（仅 scheduled 可见）
-        interval_row = QHBoxLayout()
-        interval_row.setSpacing(8)
-        interval_row.addWidget(QLabel("定时间隔"))
-        sp_interval = QSpinBox()
-        sp_interval.setRange(1, 1440)
-        sp_interval.setValue(s["interval_minutes"])
-        sp_interval.setSuffix(" 分钟")
-        setattr(self, f"sp_{key}_interval", sp_interval)
-        sp_interval.valueChanged.connect(
-            lambda: self._on_strategy_changed(key))
-        setattr(self, f"_interval_row_{key}", interval_row)
-        interval_row.addWidget(sp_interval, 1)
-        layout.addLayout(interval_row)
-
-        # 保留策略
-        retain_row = QHBoxLayout()
-        retain_row.setSpacing(8)
-        if key == "local":
-            # 最多 N 份 / 最少 N 份 / 保留 N 天
-            retain_row.addWidget(QLabel("最多"))
-            sp_max = QSpinBox()
-            sp_max.setRange(3, 200)
-            sp_max.setValue(s["max_keep"])
-            sp_max.setSuffix(" 份")
-            setattr(self, "sp_local_max_keep", sp_max)
-            sp_max.valueChanged.connect(
-                lambda: self._on_strategy_changed("local"))
-            retain_row.addWidget(sp_max)
-
-            retain_row.addWidget(QLabel("最少"))
-            sp_min = QSpinBox()
-            sp_min.setRange(1, 50)
-            sp_min.setValue(s["min_keep"])
-            sp_min.setSuffix(" 份")
-            setattr(self, "sp_local_min_keep", sp_min)
-            sp_min.valueChanged.connect(
-                lambda: self._on_strategy_changed("local"))
-            retain_row.addWidget(sp_min)
-
-            retain_row.addWidget(QLabel("保留"))
-            sp_days = QSpinBox()
-            sp_days.setRange(1, 365)
-            sp_days.setValue(s["retention_days"])
-            sp_days.setSuffix(" 天")
-            setattr(self, "sp_local_retention_days", sp_days)
-            sp_days.valueChanged.connect(
-                lambda: self._on_strategy_changed("local"))
-            retain_row.addWidget(sp_days)
-            retain_row.addStretch()
-        else:
-            retain_row.addWidget(QLabel("版本模式"))
-            cmb_ver = QComboBox()
-            cmb_ver.addItem("增量覆盖", "incremental")
-            cmb_ver.addItem("保留版本", "keep_versions")
-            idx_v = cmb_ver.findData(s.get("version_mode", "incremental"))
-            if idx_v >= 0:
-                cmb_ver.setCurrentIndex(idx_v)
-            setattr(self, "cmb_webdav_version_mode", cmb_ver)
-            cmb_ver.currentIndexChanged.connect(
-                lambda: self._on_strategy_changed("webdav"))
-            retain_row.addWidget(cmb_ver, 1)
-
-            retain_row.addWidget(QLabel("最多"))
-            sp_ver = QSpinBox()
-            sp_ver.setRange(3, 100)
-            sp_ver.setValue(s.get("max_versions", 10))
-            sp_ver.setSuffix(" 版")
-            setattr(self, "sp_webdav_max_versions", sp_ver)
-            sp_ver.valueChanged.connect(
-                lambda: self._on_strategy_changed("webdav"))
-            retain_row.addWidget(sp_ver)
-        layout.addLayout(retain_row)
-
-        # 本地：备份状态
-        if key == "local":
-            self.lbl_local_stats = QLabel()
-            self.lbl_local_stats.setStyleSheet(
-                f"font-size:11px; color:{TEXT_DIM};")
-            self.lbl_local_stats.setWordWrap(True)
-            layout.addWidget(self.lbl_local_stats)
-            self._refresh_local_stats()
-
-        # 初始可见性
-        if s["trigger"] != "scheduled":
-            interval_widget = getattr(self, f"_interval_row_{key}")
-            for i in range(interval_widget.count()):
-                w = interval_widget.itemAt(i).widget()
-                if w:
-                    w.setVisible(False)
-
-    def _on_strategy_changed(self, key: str):
-        """策略控件变更 → 保存到 config"""
-        if key == "local":
-            trigger = self.cmb_local_trigger.currentData()
-            interval = self.sp_local_interval.value()
-            self._app._config.set_local_strategy({
-                "trigger": trigger,
-                "interval_minutes": interval,
-                "max_keep": self.sp_local_max_keep.value(),
-                "retention_days": self.sp_local_retention_days.value(),
-                "min_keep": self.sp_local_min_keep.value(),
-            })
-            # 定时间隔是否可见
-            visible = (trigger == "scheduled")
-            for i in range(self._interval_row_local.count()):
-                w = self._interval_row_local.itemAt(i).widget()
-                if w:
-                    w.setVisible(visible)
-            self._refresh_local_stats()
-        else:
-            trigger = self.cmb_webdav_trigger.currentData()
-            interval = self.sp_webdav_interval.value()
-            self._app._config.set_webdav_strategy({
-                "trigger": trigger,
-                "interval_minutes": interval,
-                "version_mode": self.cmb_webdav_version_mode.currentData(),
-                "max_versions": self.sp_webdav_max_versions.value(),
-            })
-            visible = (trigger == "scheduled")
-            for i in range(self._interval_row_webdav.count()):
-                w = self._interval_row_webdav.itemAt(i).widget()
-                if w:
-                    w.setVisible(visible)
-        self._app._config.save()
-
-    def _on_local_enabled(self, checked: bool):
-        self._app._config.set_local_strategy({"enabled": checked})
+    def _on_local_strategy_changed(self):
+        s = self._local_card.get_strategy()
+        self._app._config.set_local_strategy(s)
         self._app._config.save()
         self._refresh_local_stats()
 
-    def _on_webdav_enabled(self, checked: bool):
-        self._app._config.set_webdav_strategy({"enabled": checked})
+    def _on_webdav_strategy_changed(self):
+        s = self._webdav_card.get_strategy()
+        self._app._config.set_webdav_strategy(s)
         self._app._config.save()
 
     def _refresh_local_stats(self):

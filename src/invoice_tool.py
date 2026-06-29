@@ -220,6 +220,12 @@ class InvoiceApp(QMainWindow):
         self.btn_open.setToolTip("选择一个或多个PDF发票文件（也可直接拖拽PDF到窗口）")
         self.btn_open.clicked.connect(self.open_files)
 
+        self.btn_preview = QPushButton(" 预览导入")
+        self.btn_preview.setIcon(get_icon('folder'))
+        self.btn_preview.setFixedHeight(36)
+        self.btn_preview.setToolTip("导入前预览解析结果，排除重复发票")
+        self.btn_preview.clicked.connect(self._preview_import_files)
+
         self.btn_settings = QPushButton(" 设置")
         self.btn_settings.setIcon(get_icon('settings'))
         self.btn_settings.setFixedHeight(36)
@@ -232,6 +238,7 @@ class InvoiceApp(QMainWindow):
         self.btn_export.clicked.connect(self.export_excel)
 
         top_bar.addWidget(self.btn_open)
+        top_bar.addWidget(self.btn_preview)
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
         top_bar.addSpacing(12)
@@ -1135,22 +1142,79 @@ class InvoiceApp(QMainWindow):
             self.status.showMessage("已清空")
 
     # ── 解析流程 ─────────────────────────────────
-    def _start_parse(self, files):
+
+    def _preview_import_files(self):
+        """预览导入：选择文件 → 解析 → 预览对话框 → 导入选中"""
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "选择发票PDF文件（预览模式）", "",
+            "PDF文件 (*.pdf);;所有文件 (*)")
+        if files:
+            self._start_parse(files, preview=True)
+
+    def _start_parse(self, files, preview=False):
         self.btn_open.setEnabled(False)
+        self.btn_preview.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.status.showMessage(f"正在解析 {len(files)} 个文件...")
         self._parse_errors = []
         self._duplicate_invoices = []
         self._batch_count_before = len(self.records)
+        self._preview_results = [] if preview else None
 
         # data_dir 传给 Worker，让文件复制在后台完成
         self._worker = ParseWorker(files, data_dir=self._data_dir)
         self._worker.progress.connect(self.progress_bar.setValue)
-        self._worker.result_ready.connect(self._add_record_batch)
+        if preview:
+            self._worker.result_ready.connect(self._collect_preview)
+        else:
+            self._worker.result_ready.connect(self._add_record_batch)
         self._worker.error_occurred.connect(self._on_parse_error)
-        self._worker.finished.connect(self._parse_done)
+        self._worker.finished.connect(
+            self._preview_done if preview else self._parse_done)
         self._worker.start()
+
+    def _collect_preview(self, data: dict):
+        """预览模式：收集解析结果，不做去重/导入"""
+        self._preview_results.append(data)
+
+    def _preview_done(self):
+        """预览模式：解析完毕后显示导入预览对话框"""
+        self.btn_open.setEnabled(True)
+        self.btn_preview.setEnabled(True)
+        self.progress_bar.setVisible(False)
+
+        if not self._preview_results:
+            self.status.showMessage("没有解析到有效发票")
+            return
+
+        # 构建已存在发票号集合
+        existing_nos = {r.invoice_no for r in self.records if r.invoice_no}
+
+        from ui.dialogs.import_preview import ImportPreviewDialog
+        dlg = ImportPreviewDialog(self._preview_results, existing_nos, self)
+        if dlg.exec_() != QDialog.Accepted:
+            self.status.showMessage("已取消导入")
+            self._preview_results = None
+            return
+
+        selected = dlg.get_selected_indices()
+        imported = 0
+        for idx in selected:
+            data = self._preview_results[idx]
+            inv = Invoice.from_dict(data)
+            self._init_record_fields(inv)
+            self.records.append(inv)
+            imported += 1
+
+        if imported:
+            self._rebuild_table()
+            self._refresh_filter_combos()
+            self._save_data()
+            self.status.showMessage(f"已导入 {imported} 张发票")
+        else:
+            self.status.showMessage("未导入任何发票")
+        self._preview_results = None
 
     def _on_parse_error(self, error_msg):
         self._parse_errors.append(error_msg)
@@ -1352,7 +1416,12 @@ class InvoiceApp(QMainWindow):
             btn_v.setIconSize(QtCore.QSize(14, 14))
             btn_v.setText(f"  {len(attachments)}")
             btn_v.setFlat(True)
-            btn_v.setToolTip(f"共 {len(attachments)} 个附件，点击查看")
+            # 悬停预览：tooltip 显示附件文件名列表（最多 10 个）
+            names = [os.path.basename(p) for p in attachments]
+            preview = "\n".join(f"· {n}" for n in names[:10])
+            if len(names) > 10:
+                preview += f"\n... 及其他 {len(names) - 10} 个"
+            btn_v.setToolTip(f"{len(attachments)} 个附件：\n{preview}\n\n点击查看详情")
             btn_v.clicked.connect(lambda _, r=row: self._view_attachments(r))
             lay.addWidget(btn_v)
         else:
@@ -1686,6 +1755,7 @@ class InvoiceApp(QMainWindow):
         self._save_data()
 
         self.btn_open.setEnabled(True)
+        self.btn_preview.setEnabled(True)
         self.progress_bar.setVisible(False)
         batch_count = len(self.records) - getattr(self, '_batch_count_before', 0)
         fail_count = len(getattr(self, '_parse_errors', []))
