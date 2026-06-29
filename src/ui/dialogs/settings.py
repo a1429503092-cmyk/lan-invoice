@@ -245,6 +245,48 @@ class SettingsDialog(QDialog):
         manual_row.addStretch()
         layout.addLayout(manual_row)
 
+        # MCP 服务配置
+        layout.addWidget(self._hline())
+        layout.addWidget(self._section_title("MCP 服务"))
+
+        mcp_hint = QLabel(
+            "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
+            "支持 Claude Code、Cursor、Continue 等工具，通过 stdio 协议通信，不绑端口、无冲突。"
+        )
+        mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        mcp_hint.setWordWrap(True)
+        layout.addWidget(mcp_hint)
+
+        import sys as _sys
+        if getattr(_sys, 'frozen', False):
+            self._mcp_cmd_text = f'"{_sys.executable}" --mcp'
+        else:
+            self._mcp_cmd_text = "uv run python src/invoice_tool.py --mcp"
+        mcp_cmd_row = QHBoxLayout()
+        mcp_cmd_row.setSpacing(8)
+        self.edit_mcp_cmd = QLineEdit()
+        self.edit_mcp_cmd.setReadOnly(True)
+        self.edit_mcp_cmd.setFixedHeight(32)
+        self.edit_mcp_cmd.setStyleSheet(
+            f"background:{BG_ALT}; border:none; "
+            "font-family:Consolas,monospace; padding:2px 6px; font-size:11px;")
+        self.edit_mcp_cmd.setText(self._mcp_cmd_text)
+        mcp_cmd_row.addWidget(self.edit_mcp_cmd, 1)
+        layout.addLayout(mcp_cmd_row)
+
+        mcp_btn_row = QHBoxLayout()
+        mcp_btn_row.setSpacing(8)
+        btn_copy = QPushButton("复制 MCP 命令")
+        btn_copy.setFixedHeight(32)
+        btn_copy.clicked.connect(self._copy_mcp_cmd)
+        btn_install = QPushButton("自动配置 Claude Code")
+        btn_install.setFixedHeight(32)
+        btn_install.clicked.connect(self._install_mcp)
+        mcp_btn_row.addWidget(btn_copy)
+        mcp_btn_row.addWidget(btn_install)
+        mcp_btn_row.addStretch()
+        layout.addLayout(mcp_btn_row)
+
         self._load_webdav_config()
 
         layout.addStretch()
@@ -551,6 +593,56 @@ class SettingsDialog(QDialog):
                 self._switch_to_dir(new_dir, migrate_old=(reply == QMessageBox.Yes))
             else:
                 self._switch_to_dir(new_dir, migrate_old=False)
+
+    # ── MCP 配置 ──────────────────────────────
+
+    def _copy_mcp_cmd(self):
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.edit_mcp_cmd.text())
+        QMessageBox.information(self, "已复制",
+                                "MCP 命令已复制到剪贴板。\n\n在 AI 客户端中粘贴此命令即可。")
+
+    def _install_mcp(self):
+        """自动写入 Claude Code settings.json"""
+        import json, sys
+        cfg_dir = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")), "Claude")
+        cfg_file = os.path.join(cfg_dir, "settings.json")
+
+        os.makedirs(cfg_dir, exist_ok=True)
+        cfg = {}
+        if os.path.exists(cfg_file):
+            try:
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        if getattr(sys, 'frozen', False):
+            entry = {"command": sys.executable, "args": ["--mcp"]}
+        else:
+            proj = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__)))))
+            entry = {
+                "command": "uv",
+                "args": ["run", "python", "src/invoice_tool.py", "--mcp"],
+                "cwd": proj,
+            }
+
+        servers = cfg.setdefault("mcpServers", {})
+        servers["invoice"] = entry
+
+        try:
+            with open(cfg_file, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            QMessageBox.information(
+                self, "配置完成",
+                f"已写入 Claude Code 配置：\n{cfg_file}\n\n"
+                "重启 Claude Code 后即可使用 MCP 工具。"
+            )
+        except OSError as e:
+            QMessageBox.warning(self, "配置失败",
+                                f"写入配置文件失败：\n{e}")
 
     # ── 手动 ZIP 备份恢复 ────────────────────────
 
