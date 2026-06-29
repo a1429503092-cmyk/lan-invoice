@@ -8,6 +8,7 @@ import sys
 import os
 import re
 import shutil
+import time
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
@@ -80,8 +81,9 @@ class InvoiceApp(QMainWindow):
         self._backup = BackupService()
         self._init_storage()
 
-        self._svc  = InvoiceService(self._db, self._attachment_dir,
-                                     os.path.join(self._data_dir, "invoices"))
+        self._svc = InvoiceService(self._db, self._backup, self._config,
+                                    self._data_dir, os.path.join(self._data_dir, "invoices"))
+        self._svc.enable_webdav_sync(True)
 
         self._filter_year        = None
         self._filter_month       = None
@@ -96,6 +98,12 @@ class InvoiceApp(QMainWindow):
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.timeout.connect(self._apply_filter)
+
+        # 定时备份策略
+        self._backup_timer = QTimer(self)
+        self._backup_timer.timeout.connect(self._check_scheduled_backups)
+        self._backup_timer.start(60_000)  # 每分钟检查一次
+        self._last_scheduled_backup: dict[str, float] = {"local": 0, "webdav": 0}
 
         self._init_ui()
         self.setAcceptDrops(True)
@@ -215,7 +223,7 @@ class InvoiceApp(QMainWindow):
         self.btn_settings = QPushButton(" 设置")
         self.btn_settings.setIcon(get_icon('settings'))
         self.btn_settings.setFixedHeight(36)
-        self.btn_settings.setToolTip("数据目录设置 / 软件另存")
+        self.btn_settings.setToolTip("数据目录设置")
         self.btn_settings.clicked.connect(self._open_settings)
 
         self.btn_export = QPushButton(" 导出 Excel")
@@ -728,7 +736,9 @@ class InvoiceApp(QMainWindow):
         self._rebuild_freeze_table()
 
     # ── 数据持久化 ──────────────────────────────
-    def _save_data(self):
+
+    def _persist_data(self):
+        """同步表格 → 写入 DB（不含备份策略触发）"""
         try:
             self._sync_records_from_table()
             self._db.save(self.records)
@@ -736,14 +746,21 @@ class InvoiceApp(QMainWindow):
         except Exception as e:
             log.error("数据保存失败: %s", e)
             self.status.showMessage(f"数据保存失败: {e}")
-            return
+            raise
+
+    def _save_data(self):
         try:
-            self._backup.backup(self._db.data_file)
-            self._backup.cleanup(keep_days=30)
-        except OSError as e:
-            log.warning("备份失败（数据已保存）: %s", e)
-            self.status.showMessage(f"备份失败，但数据已保存: {e}")
-        self._do_webdav_sync(silent=True)
+            self._persist_data()
+        except Exception:
+            return
+        # 本地策略 on_save
+        local_s = self._config.get_local_strategy()
+        if local_s["enabled"] and local_s["trigger"] == "on_save":
+            self._do_local_backup(local_s)
+        # WebDAV 策略 on_save
+        webdav_s = self._config.get_webdav_strategy()
+        if webdav_s["enabled"] and webdav_s["url"] and webdav_s["trigger"] == "on_save":
+            self._do_webdav_sync(silent=True)
 
     def _sync_records_from_table(self):
         shown = self._shown_records
@@ -930,11 +947,30 @@ class InvoiceApp(QMainWindow):
             self._worker.abort()
             if not self._worker.wait(3000):
                 log.warning("后台线程未在3秒内结束")
-        self._save_data()
-        # 退出时强制执行一次无防抖备份
-        if hasattr(self, '_backup') and hasattr(self, '_db'):
+        try:
+            self._persist_data()
+        except Exception:
+            pass
+        # 退出时强制执行一次无防抖备份（遵循策略 on_close/scheduled 触发条件）
+        local_s = self._config.get_local_strategy()
+        if hasattr(self, '_backup') and hasattr(self, '_db') and local_s["enabled"] \
+                and local_s["trigger"] in ("on_close", "scheduled"):
+            self._db.optimize()
             self._backup._last_backup_time = 0  # 绕过防抖
-            self._backup.backup(self._db.data_file)
+            count = self._backup.backup(self._db.data_file)
+            self._backup.cleanup(keep_days=local_s["retention_days"],
+                                 min_keep=local_s["min_keep"],
+                                 max_keep=local_s["max_keep"])
+            if count == 0:
+                QMessageBox.warning(
+                    self, "备份失败",
+                    "退出时自动备份失败，请检查磁盘空间或权限。\n"
+                    "数据已保存，可下次启动后手动备份。"
+                )
+        webdav_s = self._config.get_webdav_strategy()
+        if webdav_s["enabled"] and webdav_s["url"] \
+                and webdav_s["trigger"] in ("on_close", "scheduled"):
+            self._do_webdav_sync(silent=False)
         event.accept()
 
     def _open_settings(self):
@@ -1011,14 +1047,14 @@ class InvoiceApp(QMainWindow):
         self._update_checker.check()
 
     def _do_webdav_sync(self, silent=True):
-        if not self._config.webdav_enabled or not self._config.webdav_url:
+        webdav_s = self._config.get_webdav_strategy()
+        if not webdav_s["enabled"] or not webdav_s["url"]:
             return
         from webdav_sync import sync_to_webdav
         from PyQt5.QtCore import QThread
-        cfg = self._config
-        url = cfg.webdav_url
-        user = cfg.webdav_username
-        pw = cfg.webdav_password
+        url = webdav_s["url"]
+        user = webdav_s["username"]
+        pw = webdav_s["password"]
         data_dir = self._data_dir
 
         def run():
@@ -1037,6 +1073,42 @@ class InvoiceApp(QMainWindow):
             self.status.showMessage("WebDAV 同步中…")
         thread = _SyncThread(self)
         thread.start()
+
+    def _do_local_backup(self, strategy: dict | None = None):
+        """执行本地多盘备份，备份前清理数据库碎片，使用策略中的保留参数"""
+        if strategy is None:
+            strategy = self._config.get_local_strategy()
+        self._db.optimize()
+        try:
+            self._backup.backup(self._db.data_file)
+            self._backup.cleanup(keep_days=strategy["retention_days"],
+                                 min_keep=strategy["min_keep"],
+                                 max_keep=strategy["max_keep"])
+        except OSError as e:
+            log.warning("备份失败（数据已保存）: %s", e)
+            self.status.showMessage(f"备份失败，但数据已保存: {e}")
+
+    def _check_scheduled_backups(self):
+        """定时器回调：检查各策略是否需要触发定时备份"""
+        now = time.time()
+        local_s = self._config.get_local_strategy()
+        if local_s["enabled"] and local_s["trigger"] == "scheduled" \
+                and local_s["interval_minutes"] > 0:
+            interval = local_s["interval_minutes"] * 60
+            if now - self._last_scheduled_backup["local"] >= interval:
+                self._last_scheduled_backup["local"] = now
+                self._do_local_backup(local_s)
+                log.info("定时本地备份完成 (间隔 %d 分钟)", local_s["interval_minutes"])
+
+        webdav_s = self._config.get_webdav_strategy()
+        if webdav_s["enabled"] and webdav_s["url"] \
+                and webdav_s["trigger"] == "scheduled" \
+                and webdav_s["interval_minutes"] > 0:
+            interval = webdav_s["interval_minutes"] * 60
+            if now - self._last_scheduled_backup["webdav"] >= interval:
+                self._last_scheduled_backup["webdav"] = now
+                self._do_webdav_sync(silent=True)
+                log.info("定时 WebDAV 同步完成 (间隔 %d 分钟)", webdav_s["interval_minutes"])
 
     def open_files(self):
         files, _ = QFileDialog.getOpenFileNames(

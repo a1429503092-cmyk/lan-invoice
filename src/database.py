@@ -183,6 +183,15 @@ class Database:
         except sqlite3.Error:
             return False
 
+    def optimize(self) -> None:
+        """清理数据库碎片，缩减体积（备份前建议调用）"""
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("PRAGMA optimize")
+                conn.commit()
+        except sqlite3.Error as e:
+            log.warning("PRAGMA optimize 失败: %s", e)
+
     # ── 迁移 ──────────────────────────────────
 
     def migrate_from_json(self, json_path: str) -> int:

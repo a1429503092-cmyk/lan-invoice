@@ -15,7 +15,6 @@ log = getLogger(__name__)
 _BACKUP_DIR_NAME = ".lan-invoice-backup"
 _BACKUP_PATTERN = re.compile(r"^(?:invoices_(\d{8}_\d{6})\.db|data_(\d{8}_\d{6}))$")
 _DEBOUNCE_SECONDS = 5
-_MIN_KEEP = 3
 
 
 class BackupService:
@@ -178,7 +177,8 @@ class BackupService:
 
     # ── 清理 ──────────────────────────────────
 
-    def cleanup(self, keep_days: int = 30) -> int:
+    def cleanup(self, keep_days: int = 30, min_keep: int = 3,
+                max_keep: int = 30) -> int:
         cutoff = time.time() - keep_days * 86400
         dirs = self.get_backup_dirs()
         removed = 0
@@ -192,9 +192,9 @@ class BackupService:
                     backups.append((mtime, fp))
             backups.sort(key=lambda x: x[0], reverse=True)
             for i, (mtime, fp) in enumerate(backups):
-                if i < _MIN_KEEP:
+                if i < min_keep:
                     continue
-                if mtime < cutoff:
+                if i >= max_keep or mtime < cutoff:
                     try:
                         if os.path.isdir(fp):
                             shutil.rmtree(fp)
@@ -206,3 +206,64 @@ class BackupService:
         if removed > 0:
             log.info("清理过期备份: %d 个", removed)
         return removed
+
+    # ── 统计 ──────────────────────────────────
+
+    def get_stats(self) -> dict:
+        """返回所有分区的备份统计：份数、分区数、最近时间、总大小"""
+        dirs = self.get_backup_dirs()
+        entries = []
+        for d in dirs:
+            if not os.path.isdir(d):
+                continue
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for f in names:
+                m = _BACKUP_PATTERN.match(f)
+                if not m:
+                    continue
+                fp = os.path.join(d, f)
+                # 新格式：data_TIMESTAMP/ 目录（内含 invoices.db）
+                if os.path.isdir(fp) and os.path.exists(os.path.join(fp, "invoices.db")):
+                    entries.append((os.path.getmtime(fp), fp, d))
+                # 旧格式：invoices_TIMESTAMP.db 单文件
+                elif os.path.isfile(fp) and f.endswith(".db"):
+                    entries.append((os.path.getmtime(fp), fp, d))
+
+        if not entries:
+            return {"count": 0, "partitions": 0, "latest": None, "size": 0}
+
+        entries.sort(key=lambda x: x[0], reverse=True)
+        latest_time = entries[0][0]
+        partitions = set(e[2] for e in entries)
+        total_size = 0
+        for _, fp, _ in entries:
+            total_size = self._count_size(fp, total_size)
+
+        return {
+            "count": len(entries),
+            "partitions": len(partitions),
+            "latest": datetime.fromtimestamp(latest_time).strftime("%Y-%m-%d %H:%M:%S"),
+            "size": total_size,
+        }
+
+    @staticmethod
+    def _count_size(fp: str, total_size: int) -> int:
+        """递归统计路径大小，容错处理"""
+        if os.path.isfile(fp):
+            try:
+                return total_size + os.path.getsize(fp)
+            except OSError:
+                return total_size
+        try:
+            for dirpath, _, filenames in os.walk(fp):
+                for fn in filenames:
+                    try:
+                        total_size += os.path.getsize(os.path.join(dirpath, fn))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return total_size

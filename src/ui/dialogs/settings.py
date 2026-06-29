@@ -1,25 +1,34 @@
 # -*- coding: utf-8 -*-
-"""设置对话框：数据目录配置 + 软件另存 + 数据备份恢复"""
+"""设置对话框：数据目录配置 + 数据备份恢复"""
 
 import os
 import shutil
 import zipfile
+from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QFileDialog, QMessageBox, QFrame, QListWidget
+    QFileDialog, QMessageBox, QFrame, QListWidget, QCheckBox, QComboBox,
+    QSpinBox
 )
-from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
-
+from PyQt5.QtCore import Qt
 from logger import getLogger
 log = getLogger(__name__)
 
 from ui.theme import (TEXT, TEXT_SEC, TEXT_DIM, BG_ALT, BORDER_LIGHT)
 
 
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    else:
+        return f"{size / (1024 * 1024):.1f} MB"
+
+
 class SettingsDialog(QDialog):
-    """设置对话框：数据目录配置 + 软件另存 + 数据备份恢复"""
+    """设置对话框：数据目录配置 + 数据备份恢复"""
 
     def __init__(self, app_ref, parent=None):
         super().__init__(parent)
@@ -57,12 +66,7 @@ class SettingsDialog(QDialog):
                     fp = os.path.join(dirpath, f)
                     if os.path.isfile(fp):
                         total += os.path.getsize(fp)
-        if total < 1024:
-            return f"{total} B"
-        elif total < 1024 * 1024:
-            return f"{total / 1024:.1f} KB"
-        else:
-            return f"{total / (1024 * 1024):.1f} MB"
+        return _format_size(total)
 
     # ── UI 构建 ─────────────────────────────────
 
@@ -123,21 +127,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._hline())
 
-        layout.addWidget(self._section_title("软件另存（便携版）"))
-        save_hint = QLabel(
-            "将软件及全部数据复制到目标文件夹，拷贝后可随身携带直接运行。"
-        )
-        save_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        save_hint.setWordWrap(True)
-        layout.addWidget(save_hint)
-
-        btn_saveas = QPushButton("选择目录另存…")
-        btn_saveas.setFixedHeight(32)
-        btn_saveas.clicked.connect(self._saveas_software)
-        layout.addWidget(btn_saveas)
-
-        layout.addWidget(self._hline())
-
         layout.addWidget(self._section_title("标签模板"))
         tag_hint = QLabel("定义发票记录的自定义标签字段，将在表格中作为可编辑列显示。")
         tag_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
@@ -169,29 +158,23 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._hline())
 
-        layout.addWidget(self._section_title("数据备份与恢复"))
+        # ══════ 本地多盘备份 ══════
+        layout.addWidget(self._section_title("本地多盘备份"))
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        btn_backup = QPushButton("备份数据…")
-        btn_backup.setFixedHeight(32)
-        btn_backup.clicked.connect(self._backup_data)
-        btn_restore = QPushButton("恢复数据…")
-        btn_restore.setFixedHeight(32)
-        btn_restore.clicked.connect(self._restore_data)
-        btn_row.addWidget(btn_backup)
-        btn_row.addWidget(btn_restore)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
+        self._build_strategy_card("local", layout)
 
         layout.addWidget(self._hline())
 
+        # ══════ WebDAV 远程备份 ══════
         layout.addWidget(self._section_title("远程备份（WebDAV）"))
 
-        webdav_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
-        webdav_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        webdav_hint.setWordWrap(True)
-        layout.addWidget(webdav_hint)
+        self._build_strategy_card("webdav", layout)
+
+        # WebDAV 专属：地址和认证
+        wd_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
+        wd_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        wd_hint.setWordWrap(True)
+        layout.addWidget(wd_hint)
 
         url_row = QHBoxLayout()
         url_row.setSpacing(8)
@@ -234,56 +217,271 @@ class SettingsDialog(QDialog):
         wd_btn_row.addStretch()
         layout.addLayout(wd_btn_row)
 
+        # 手动 ZIP 备份按钮
+        layout.addWidget(self._hline())
+        layout.addWidget(self._section_title("手动操作"))
+        manual_row = QHBoxLayout()
+        manual_row.setSpacing(8)
+        btn_backup = QPushButton("导出 ZIP 备份…")
+        btn_backup.setFixedHeight(32)
+        btn_backup.clicked.connect(self._backup_data)
+        btn_restore = QPushButton("从 ZIP 恢复…")
+        btn_restore.setFixedHeight(32)
+        btn_restore.clicked.connect(self._restore_data)
+        manual_row.addWidget(btn_backup)
+        manual_row.addWidget(btn_restore)
+        manual_row.addStretch()
+        layout.addLayout(manual_row)
+
         self._load_webdav_config()
 
         layout.addStretch()
 
         btn_close = QPushButton("关闭")
         btn_close.setFixedHeight(32)
-        btn_close.clicked.connect(self.accept)
+        btn_close.clicked.connect(self._save_and_close)
         layout.addWidget(btn_close, alignment=Qt.AlignRight)
+
+        from ui.theme import DIALOG_QSS
+        self.setStyleSheet(DIALOG_QSS)
+        for btn in self.findChildren(QPushButton):
+            btn.setCursor(Qt.PointingHandCursor)
+
+    def _save_and_close(self):
+        self._save_webdav_config()
+        self.accept()
 
     def _check_update(self):
         self._app.check_update()
 
+    # ── 策略卡片构建 ─────────────────────────────
+
+    TRIGGER_LABELS = {
+        "on_save": "每次保存时",
+        "scheduled": "定时",
+        "on_close": "仅关闭时",
+        "manual": "纯手动",
+    }
+
+    def _build_strategy_card(self, key: str, layout: QVBoxLayout):
+        """构建一个备份策略卡片（local 或 webdav）"""
+        if key == "local":
+            s = self._app._config.get_local_strategy()
+        else:
+            s = self._app._config.get_webdav_strategy()
+
+        # 启用开关
+        cb_label = "本地多盘备份" if key == "local" else "WebDAV 远程同步"
+        cb = QCheckBox(cb_label)
+        cb.setChecked(s["enabled"])
+        setattr(self, f"cb_{key}_enabled", cb)
+        if key == "local":
+            cb.toggled.connect(self._on_local_enabled)
+        else:
+            cb.toggled.connect(self._on_webdav_enabled)
+        layout.addWidget(cb)
+
+        # 触发时机行
+        trig_row = QHBoxLayout()
+        trig_row.setSpacing(8)
+        trig_row.addWidget(QLabel("触发时机"))
+        cmb_trigger = QComboBox()
+        for val, label in self.TRIGGER_LABELS.items():
+            cmb_trigger.addItem(label, val)
+        idx = cmb_trigger.findData(s["trigger"])
+        if idx >= 0:
+            cmb_trigger.setCurrentIndex(idx)
+        setattr(self, f"cmb_{key}_trigger", cmb_trigger)
+        cmb_trigger.currentIndexChanged.connect(
+            lambda: self._on_strategy_changed(key))
+        trig_row.addWidget(cmb_trigger, 1)
+        layout.addLayout(trig_row)
+
+        # 定时间隔（仅 scheduled 可见）
+        interval_row = QHBoxLayout()
+        interval_row.setSpacing(8)
+        interval_row.addWidget(QLabel("定时间隔"))
+        sp_interval = QSpinBox()
+        sp_interval.setRange(1, 1440)
+        sp_interval.setValue(s["interval_minutes"])
+        sp_interval.setSuffix(" 分钟")
+        setattr(self, f"sp_{key}_interval", sp_interval)
+        sp_interval.valueChanged.connect(
+            lambda: self._on_strategy_changed(key))
+        setattr(self, f"_interval_row_{key}", interval_row)
+        interval_row.addWidget(sp_interval, 1)
+        layout.addLayout(interval_row)
+
+        # 保留策略
+        retain_row = QHBoxLayout()
+        retain_row.setSpacing(8)
+        if key == "local":
+            # 最多 N 份 / 最少 N 份 / 保留 N 天
+            retain_row.addWidget(QLabel("最多"))
+            sp_max = QSpinBox()
+            sp_max.setRange(3, 200)
+            sp_max.setValue(s["max_keep"])
+            sp_max.setSuffix(" 份")
+            setattr(self, "sp_local_max_keep", sp_max)
+            sp_max.valueChanged.connect(
+                lambda: self._on_strategy_changed("local"))
+            retain_row.addWidget(sp_max)
+
+            retain_row.addWidget(QLabel("最少"))
+            sp_min = QSpinBox()
+            sp_min.setRange(1, 50)
+            sp_min.setValue(s["min_keep"])
+            sp_min.setSuffix(" 份")
+            setattr(self, "sp_local_min_keep", sp_min)
+            sp_min.valueChanged.connect(
+                lambda: self._on_strategy_changed("local"))
+            retain_row.addWidget(sp_min)
+
+            retain_row.addWidget(QLabel("保留"))
+            sp_days = QSpinBox()
+            sp_days.setRange(1, 365)
+            sp_days.setValue(s["retention_days"])
+            sp_days.setSuffix(" 天")
+            setattr(self, "sp_local_retention_days", sp_days)
+            sp_days.valueChanged.connect(
+                lambda: self._on_strategy_changed("local"))
+            retain_row.addWidget(sp_days)
+            retain_row.addStretch()
+        else:
+            retain_row.addWidget(QLabel("版本模式"))
+            cmb_ver = QComboBox()
+            cmb_ver.addItem("增量覆盖", "incremental")
+            cmb_ver.addItem("保留版本", "keep_versions")
+            idx_v = cmb_ver.findData(s.get("version_mode", "incremental"))
+            if idx_v >= 0:
+                cmb_ver.setCurrentIndex(idx_v)
+            setattr(self, "cmb_webdav_version_mode", cmb_ver)
+            cmb_ver.currentIndexChanged.connect(
+                lambda: self._on_strategy_changed("webdav"))
+            retain_row.addWidget(cmb_ver, 1)
+
+            retain_row.addWidget(QLabel("最多"))
+            sp_ver = QSpinBox()
+            sp_ver.setRange(3, 100)
+            sp_ver.setValue(s.get("max_versions", 10))
+            sp_ver.setSuffix(" 版")
+            setattr(self, "sp_webdav_max_versions", sp_ver)
+            sp_ver.valueChanged.connect(
+                lambda: self._on_strategy_changed("webdav"))
+            retain_row.addWidget(sp_ver)
+        layout.addLayout(retain_row)
+
+        # 本地：备份状态
+        if key == "local":
+            self.lbl_local_stats = QLabel()
+            self.lbl_local_stats.setStyleSheet(
+                f"font-size:11px; color:{TEXT_DIM};")
+            self.lbl_local_stats.setWordWrap(True)
+            layout.addWidget(self.lbl_local_stats)
+            self._refresh_local_stats()
+
+        # 初始可见性
+        if s["trigger"] != "scheduled":
+            interval_widget = getattr(self, f"_interval_row_{key}")
+            for i in range(interval_widget.count()):
+                w = interval_widget.itemAt(i).widget()
+                if w:
+                    w.setVisible(False)
+
+    def _on_strategy_changed(self, key: str):
+        """策略控件变更 → 保存到 config"""
+        if key == "local":
+            trigger = self.cmb_local_trigger.currentData()
+            interval = self.sp_local_interval.value()
+            self._app._config.set_local_strategy({
+                "trigger": trigger,
+                "interval_minutes": interval,
+                "max_keep": self.sp_local_max_keep.value(),
+                "retention_days": self.sp_local_retention_days.value(),
+                "min_keep": self.sp_local_min_keep.value(),
+            })
+            # 定时间隔是否可见
+            visible = (trigger == "scheduled")
+            for i in range(self._interval_row_local.count()):
+                w = self._interval_row_local.itemAt(i).widget()
+                if w:
+                    w.setVisible(visible)
+            self._refresh_local_stats()
+        else:
+            trigger = self.cmb_webdav_trigger.currentData()
+            interval = self.sp_webdav_interval.value()
+            self._app._config.set_webdav_strategy({
+                "trigger": trigger,
+                "interval_minutes": interval,
+                "version_mode": self.cmb_webdav_version_mode.currentData(),
+                "max_versions": self.sp_webdav_max_versions.value(),
+            })
+            visible = (trigger == "scheduled")
+            for i in range(self._interval_row_webdav.count()):
+                w = self._interval_row_webdav.itemAt(i).widget()
+                if w:
+                    w.setVisible(visible)
+        self._app._config.save()
+
+    def _on_local_enabled(self, checked: bool):
+        self._app._config.set_local_strategy({"enabled": checked})
+        self._app._config.save()
+        self._refresh_local_stats()
+
+    def _on_webdav_enabled(self, checked: bool):
+        self._app._config.set_webdav_strategy({"enabled": checked})
+        self._app._config.save()
+
+    def _refresh_local_stats(self):
+        stats = self._app._backup.get_stats()
+        if stats["count"] == 0:
+            self.lbl_local_stats.setText("暂无自动备份")
+            return
+        size_str = _format_size(stats["size"])
+        self.lbl_local_stats.setText(
+            f"自动备份：{stats['count']} 份（{stats['partitions']} 个分区）"
+            f"  |  最近：{stats['latest']}"
+            f"  |  总计：{size_str}"
+        )
+
     # ── WebDAV ──────────────────────────────────
 
     def _load_webdav_config(self):
-        cfg = self._app._config
-        self.edit_wd_url.setText(cfg.webdav_url)
-        self.edit_wd_user.setText(cfg.webdav_username)
-        self.edit_wd_pass.setText(cfg.webdav_password)
+        s = self._app._config.get_webdav_strategy()
+        self.edit_wd_url.setText(s["url"])
+        self.edit_wd_user.setText(s["username"])
+        self.edit_wd_pass.setText(s["password"])
 
     def _save_webdav_config(self):
-        cfg = self._app._config
-        cfg.webdav_url = self.edit_wd_url.text().strip()
-        cfg.webdav_username = self.edit_wd_user.text().strip()
-        cfg.webdav_password = self.edit_wd_pass.text()
-        cfg.webdav_enabled = bool(cfg.webdav_url)
-        cfg.save()
+        self._app._config.set_webdav_strategy({
+            "url": self.edit_wd_url.text().strip(),
+            "username": self.edit_wd_user.text().strip(),
+            "password": self.edit_wd_pass.text(),
+        })
+        self._app._config.save()
 
     def _test_webdav(self):
         self._save_webdav_config()
         from webdav_sync import test_connection
-        cfg = self._app._config
-        if test_connection(cfg.webdav_url, cfg.webdav_username, cfg.webdav_password):
+        s = self._app._config.get_webdav_strategy()
+        if test_connection(s["url"], s["username"], s["password"]):
             QMessageBox.information(self, "测试成功", "WebDAV 连接正常")
         else:
             QMessageBox.warning(self, "测试失败",
-                                f"无法连接到 {cfg.webdav_url}\n请检查地址和账号密码。")
+                                f"无法连接到 {s['url']}\n请检查地址和账号密码。")
 
     def _sync_webdav_now(self):
         self._save_webdav_config()
-        cfg = self._app._config
-        if not cfg.webdav_url:
+        s = self._app._config.get_webdav_strategy()
+        if not s["url"]:
             QMessageBox.warning(self, "提示", "请先填写 WebDAV 地址")
             return
         self._app._do_webdav_sync(silent=False)
 
     def _restore_webdav(self):
         self._save_webdav_config()
-        cfg = self._app._config
-        if not cfg.webdav_url:
+        s = self._app._config.get_webdav_strategy()
+        if not s["url"]:
             QMessageBox.warning(self, "提示", "请先填写 WebDAV 地址")
             return
         reply = QMessageBox.warning(
@@ -294,18 +492,13 @@ class SettingsDialog(QDialog):
         if reply == QMessageBox.Yes:
             from webdav_sync import restore_from_webdav
             self._app._save_data()
-            ok = restore_from_webdav(self._app._data_dir, cfg.webdav_url,
-                                     cfg.webdav_username, cfg.webdav_password)
+            ok = restore_from_webdav(self._app._data_dir, s["url"],
+                                     s["username"], s["password"])
             if ok:
                 QMessageBox.information(self, "恢复完成", "数据已从 WebDAV 恢复，请重新打开软件。")
                 self._app.close()
             else:
                 QMessageBox.warning(self, "恢复失败", "从 WebDAV 下载数据失败，请检查网络和配置。")
-
-        from ui.theme import DIALOG_QSS
-        self.setStyleSheet(DIALOG_QSS)
-        for btn in self.findChildren(QPushButton):
-            btn.setCursor(Qt.PointingHandCursor)
 
     # ── 标签模板管理 ─────────────────────────────
 
@@ -377,9 +570,40 @@ class SettingsDialog(QDialog):
             return True
         return False
 
+    def _snapshot_before_switch(self):
+        """创建目录切换前的 ZIP 快照备份"""
+        import tempfile
+        from PyQt5.QtWidgets import QApplication
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_path = os.path.join(tempfile.gettempdir(), f"lan_invoice_snapshot_{ts}.zip")
+        try:
+            data_dir = self._app._data_dir
+            if not os.path.isdir(data_dir):
+                return
+            self._app.status.showMessage("正在创建切换前快照备份…")
+            QApplication.processEvents()
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                file_count = 0
+                for dirpath, _, filenames in os.walk(data_dir):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        zf.write(fp, os.path.relpath(fp, data_dir))
+                        file_count += 1
+                        if file_count % 20 == 0:
+                            QApplication.processEvents()
+            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+            log.info("目录切换前快照: %s (%.1f MB)", zip_path, size_mb)
+            self._app.status.showMessage(f"快照备份完成 ({size_mb:.1f} MB)", 3000)
+        except Exception as e:
+            log.warning("快照备份失败（仍继续切换）: %s", e)
+            self._app.status.showMessage("", 0)
+
     def _switch_to_dir(self, new_dir: str, migrate_old: bool):
         """执行目录切换"""
         self._app._save_data()
+
+        # 切换前自动创建 ZIP 快照备份
+        self._snapshot_before_switch()
 
         if migrate_old:
             os.makedirs(new_dir, exist_ok=True)
@@ -481,74 +705,7 @@ class SettingsDialog(QDialog):
             else:
                 self._switch_to_dir(new_dir, migrate_old=False)
 
-    # ── 软件另存 ────────────────────────────────
-
-    def _saveas_software(self):
-        dst_dir = QFileDialog.getExistingDirectory(self, "选择软件保存目录")
-        if not dst_dir:
-            return
-
-        src_base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        src_script = os.path.join(src_base, "src", "invoice_tool.py")
-
-        items = []
-        if os.path.exists(src_script):
-            items.append(("file", src_script, os.path.join(dst_dir, os.path.basename(src_script))))
-        req_src = os.path.join(src_base, "requirements.txt")
-        if os.path.exists(req_src):
-            items.append(("file", req_src, os.path.join(dst_dir, "requirements.txt")))
-        bat_src = os.path.join(src_base, "启动.bat")
-        if os.path.exists(bat_src):
-            items.append(("file", bat_src, os.path.join(dst_dir, "启动.bat")))
-        if os.path.exists(self._app._data_file):
-            items.append(("file", self._app._data_file, os.path.join(dst_dir, "invoices.db")))
-        # 旧目录兼容：迁移后可能遗留的 screenshots/contracts
-        for sub in ("screenshots", "contracts"):
-            old_dir = os.path.join(self._app._data_dir, sub)
-            if os.path.isdir(old_dir):
-                items.append(("dir", old_dir, os.path.join(dst_dir, sub)))
-
-        if not items:
-            QMessageBox.warning(self, "无内容", "未找到可复制的软件文件。")
-            return
-
-        reply = QMessageBox.question(
-            self, "确认另存",
-            f"确认将软件及数据复制到：\n{dst_dir}\n\n"
-            f"包含：主程序、数据文件、截图目录、合同目录",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        errors = []
-        for kind, src, dst in items:
-            try:
-                if kind == "file":
-                    shutil.copy2(src, dst)
-                elif kind == "dir":
-                    if os.path.exists(dst):
-                        shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-            except Exception as e:
-                errors.append(f"{os.path.basename(src)}：{e}")
-
-        if errors:
-            QMessageBox.warning(self, "部分文件复制失败",
-                                "以下文件复制失败：\n\n" + "\n".join(errors))
-        else:
-            QMessageBox.information(
-                self, "另存成功",
-                f"软件已成功复制到：\n{dst_dir}\n\n"
-                "将此文件夹拷贝到任意位置（含U盘）均可直接运行。\n"
-                "运行方式：双击 启动.bat 或直接执行 invoice_tool.py"
-            )
-            try:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(dst_dir))
-            except Exception:
-                pass
-
-    # ── 数据备份与恢复 ──────────────────────────
+    # ── 手动 ZIP 备份恢复 ────────────────────────
 
     def _backup_data(self):
         from datetime import datetime
@@ -572,6 +729,7 @@ class SettingsDialog(QDialog):
                 self, "备份成功",
                 f"数据已备份到：\n{dst}\n\n备份大小：{size_mb:.1f} MB"
             )
+            self._refresh_local_stats()
         except Exception as e:
             QMessageBox.critical(self, "备份失败", f"备份时出错：\n{e}")
 
