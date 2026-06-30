@@ -72,7 +72,6 @@ class SettingsDialog(QDialog):
 
     def _build_ui(self):
         from PyQt5.QtWidgets import QTabWidget
-        from ui.widgets.strategy_card import StrategyCard
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
