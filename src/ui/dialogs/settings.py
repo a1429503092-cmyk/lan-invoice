@@ -71,10 +71,14 @@ class SettingsDialog(QDialog):
     # ── UI 构建 ─────────────────────────────────
 
     def _build_ui(self):
+        from PyQt5.QtWidgets import QTabWidget
+        from ui.widgets.strategy_card import StrategyCard
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(8)
 
+        # 标题栏
         title_row = QHBoxLayout()
         lbl_title = QLabel("设置")
         lbl_title.setStyleSheet(f"font-size:15px; font-weight:bold; color:{TEXT};")
@@ -89,208 +93,17 @@ class SettingsDialog(QDialog):
         title_row.addWidget(btn_check)
         layout.addLayout(title_row)
 
-        layout.addWidget(self._hline())
+        # 页签
+        tabs = QTabWidget()
+        tabs.addTab(self._build_general_tab(), "通用")
+        tabs.addTab(self._build_backup_tab(), "备份策略")
+        tabs.addTab(self._build_mcp_tab(), "MCP 服务")
+        layout.addWidget(tabs)
 
-        layout.addWidget(self._section_title("数据存储"))
-
-        invoice_count = len(self._app.records)
-        attachments = sum(len(r.get("attachments", [])) for r in self._app.records)
-        data_size = self._calc_data_size()
-
-        stats_row = QHBoxLayout()
-        stats_row.setSpacing(24)
-        stats_row.addWidget(self._stat_label("发票", f"{invoice_count} 条"))
-        stats_row.addWidget(self._stat_label("附件", f"{attachments} 个"))
-        stats_row.addWidget(self._stat_label("大小", data_size))
-        stats_row.addStretch()
-        layout.addLayout(stats_row)
-
-        path_row = QHBoxLayout()
-        path_row.setSpacing(8)
-        self.edit_data_dir = QLineEdit(self._app._data_dir)
-        self.edit_data_dir.setReadOnly(True)
-        self.edit_data_dir.setFixedHeight(32)
-        self.edit_data_dir.setStyleSheet(
-            f"background:{BG_ALT}; border:none; "
-            "padding:2px 6px; font-size:11px;")
-        btn_browse = QPushButton("浏览…")
-        btn_browse.setFixedHeight(32)
-        btn_browse.clicked.connect(self._browse_data_dir)
-        path_row.addWidget(self.edit_data_dir, 1)
-        path_row.addWidget(btn_browse)
-        layout.addLayout(path_row)
-
-        btn_apply = QPushButton("应用新目录")
-        btn_apply.setFixedHeight(32)
-        btn_apply.clicked.connect(self._apply_data_dir)
-        layout.addWidget(btn_apply)
-
-        layout.addWidget(self._hline())
-
-        layout.addWidget(self._section_title("标签模板"))
-        tag_hint = QLabel("定义发票记录的自定义标签字段，将在表格中作为可编辑列显示。")
-        tag_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        tag_hint.setWordWrap(True)
-        layout.addWidget(tag_hint)
-
-        tag_row = QHBoxLayout()
-        tag_row.setSpacing(8)
-        self.edit_tag_name = QLineEdit()
-        self.edit_tag_name.setPlaceholderText("新标签名（如：项目名称）")
-        self.edit_tag_name.setFixedHeight(32)
-        btn_add_tag = QPushButton("添加标签")
-        btn_add_tag.setFixedHeight(32)
-        btn_add_tag.clicked.connect(self._add_tag_template)
-        tag_row.addWidget(self.edit_tag_name, 1)
-        tag_row.addWidget(btn_add_tag)
-        layout.addLayout(tag_row)
-
-        self.tag_list = QListWidget()
-        self.tag_list.setMaximumHeight(100)
-        self.tag_list.setStyleSheet(f"background:{BG_ALT}; border:none; font-size:12px;")
-        self._load_tag_templates()
-        layout.addWidget(self.tag_list)
-
-        btn_del_tag = QPushButton("删除选中标签")
-        btn_del_tag.setFixedHeight(28)
-        btn_del_tag.clicked.connect(self._del_tag_template)
-        layout.addWidget(btn_del_tag)
-
-        layout.addWidget(self._hline())
-
-        # ══════ 本地多盘备份 ══════
-        layout.addWidget(self._section_title("本地多盘备份"))
-
-        from ui.widgets.strategy_card import StrategyCard
-        self._local_card = StrategyCard("local", self._app._config.get_local_strategy())
-        self._local_card.strategy_changed.connect(self._on_local_strategy_changed)
-        layout.addWidget(self._local_card)
-
-        # 本地备份状态
-        self.lbl_local_stats = QLabel()
-        self.lbl_local_stats.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        self.lbl_local_stats.setWordWrap(True)
-        layout.addWidget(self.lbl_local_stats)
-        self._refresh_local_stats()
-
-        layout.addWidget(self._hline())
-
-        # ══════ WebDAV 远程备份 ══════
-        layout.addWidget(self._section_title("远程备份（WebDAV）"))
-
-        self._webdav_card = StrategyCard("webdav", self._app._config.get_webdav_strategy())
-        self._webdav_card.strategy_changed.connect(self._on_webdav_strategy_changed)
-        layout.addWidget(self._webdav_card)
-
-        # WebDAV 专属：地址和认证
-        wd_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
-        wd_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        wd_hint.setWordWrap(True)
-        layout.addWidget(wd_hint)
-
-        url_row = QHBoxLayout()
-        url_row.setSpacing(8)
-        url_row.addWidget(QLabel("地址"))
-        self.edit_wd_url = QLineEdit()
-        self.edit_wd_url.setPlaceholderText("https://nas.local:5006/invoice-backup/")
-        self.edit_wd_url.setFixedHeight(32)
-        url_row.addWidget(self.edit_wd_url, 1)
-        layout.addLayout(url_row)
-
-        auth_row = QHBoxLayout()
-        auth_row.setSpacing(8)
-        auth_row.addWidget(QLabel("账号"))
-        self.edit_wd_user = QLineEdit()
-        self.edit_wd_user.setPlaceholderText("用户名")
-        self.edit_wd_user.setFixedHeight(32)
-        auth_row.addWidget(self.edit_wd_user, 1)
-        auth_row.addWidget(QLabel("密码"))
-        self.edit_wd_pass = QLineEdit()
-        self.edit_wd_pass.setPlaceholderText("密码")
-        self.edit_wd_pass.setEchoMode(QLineEdit.Password)
-        self.edit_wd_pass.setFixedHeight(32)
-        auth_row.addWidget(self.edit_wd_pass, 1)
-        layout.addLayout(auth_row)
-
-        wd_btn_row = QHBoxLayout()
-        wd_btn_row.setSpacing(8)
-        btn_test_wd = QPushButton("测试连接")
-        btn_test_wd.setFixedHeight(32)
-        btn_test_wd.clicked.connect(self._test_webdav)
-        btn_sync_wd = QPushButton("立即同步")
-        btn_sync_wd.setFixedHeight(32)
-        btn_sync_wd.clicked.connect(self._sync_webdav_now)
-        btn_restore_wd = QPushButton("从远程恢复…")
-        btn_restore_wd.setFixedHeight(32)
-        btn_restore_wd.clicked.connect(self._restore_webdav)
-        wd_btn_row.addWidget(btn_test_wd)
-        wd_btn_row.addWidget(btn_sync_wd)
-        wd_btn_row.addWidget(btn_restore_wd)
-        wd_btn_row.addStretch()
-        layout.addLayout(wd_btn_row)
-
-        # 手动 ZIP 备份按钮
-        layout.addWidget(self._hline())
-        layout.addWidget(self._section_title("手动操作"))
-        manual_row = QHBoxLayout()
-        manual_row.setSpacing(8)
-        btn_backup = QPushButton("导出 ZIP 备份…")
-        btn_backup.setFixedHeight(32)
-        btn_backup.clicked.connect(self._backup_data)
-        btn_restore = QPushButton("从 ZIP 恢复…")
-        btn_restore.setFixedHeight(32)
-        btn_restore.clicked.connect(self._restore_data)
-        manual_row.addWidget(btn_backup)
-        manual_row.addWidget(btn_restore)
-        manual_row.addStretch()
-        layout.addLayout(manual_row)
-
-        # MCP 服务配置
-        layout.addWidget(self._hline())
-        layout.addWidget(self._section_title("MCP 服务"))
-
-        mcp_hint = QLabel(
-            "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
-            "支持 Claude Code、Cursor、Continue 等工具，通过 stdio 协议通信，不绑端口、无冲突。"
-        )
-        mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
-        mcp_hint.setWordWrap(True)
-        layout.addWidget(mcp_hint)
-
-        import sys as _sys
-        if getattr(_sys, 'frozen', False):
-            self._mcp_cmd_text = f'"{_sys.executable}" --mcp'
-        else:
-            self._mcp_cmd_text = "uv run python src/invoice_tool.py --mcp"
-        mcp_cmd_row = QHBoxLayout()
-        mcp_cmd_row.setSpacing(8)
-        self.edit_mcp_cmd = QLineEdit()
-        self.edit_mcp_cmd.setReadOnly(True)
-        self.edit_mcp_cmd.setFixedHeight(32)
-        self.edit_mcp_cmd.setStyleSheet(
-            f"background:{BG_ALT}; border:none; "
-            "font-family:Consolas,monospace; padding:2px 6px; font-size:11px;")
-        self.edit_mcp_cmd.setText(self._mcp_cmd_text)
-        mcp_cmd_row.addWidget(self.edit_mcp_cmd, 1)
-        layout.addLayout(mcp_cmd_row)
-
-        mcp_btn_row = QHBoxLayout()
-        mcp_btn_row.setSpacing(8)
-        btn_copy = QPushButton("复制 MCP 命令")
-        btn_copy.setFixedHeight(32)
-        btn_copy.clicked.connect(self._copy_mcp_cmd)
-        btn_install = QPushButton("自动配置 Claude Code")
-        btn_install.setFixedHeight(32)
-        btn_install.clicked.connect(self._install_mcp)
-        mcp_btn_row.addWidget(btn_copy)
-        mcp_btn_row.addWidget(btn_install)
-        mcp_btn_row.addStretch()
-        layout.addLayout(mcp_btn_row)
-
+        # WebDAV 配置加载（在构建完 widget 后）
         self._load_webdav_config()
 
-        layout.addStretch()
-
+        # 关闭
         btn_close = QPushButton("关闭")
         btn_close.setFixedHeight(32)
         btn_close.clicked.connect(self._save_and_close)
@@ -307,6 +120,209 @@ class SettingsDialog(QDialog):
 
     def _check_update(self):
         self._app.check_update()
+
+    # ── 页签构建 ─────────────────────────────
+
+    def _build_general_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(8)
+
+        lay.addWidget(self._section_title("数据存储"))
+        invoice_count = len(self._app.records)
+        attachments = sum(len(r.get("attachments", [])) for r in self._app.records)
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(24)
+        stats_row.addWidget(self._stat_label("发票", f"{invoice_count} 条"))
+        stats_row.addWidget(self._stat_label("附件", f"{attachments} 个"))
+        stats_row.addWidget(self._stat_label("大小", self._calc_data_size()))
+        stats_row.addStretch()
+        lay.addLayout(stats_row)
+
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
+        self.edit_data_dir = QLineEdit(self._app._data_dir)
+        self.edit_data_dir.setReadOnly(True)
+        self.edit_data_dir.setFixedHeight(32)
+        self.edit_data_dir.setStyleSheet(
+            f"background:{BG_ALT}; border:none; "
+            "padding:2px 6px; font-size:11px;")
+        btn_browse = QPushButton("浏览…")
+        btn_browse.setFixedHeight(32)
+        btn_browse.clicked.connect(self._browse_data_dir)
+        path_row.addWidget(self.edit_data_dir, 1)
+        path_row.addWidget(btn_browse)
+        lay.addLayout(path_row)
+        btn_apply = QPushButton("应用新目录")
+        btn_apply.setFixedHeight(32)
+        btn_apply.clicked.connect(self._apply_data_dir)
+        lay.addWidget(btn_apply)
+
+        lay.addWidget(self._hline())
+        lay.addWidget(self._section_title("标签模板"))
+        tag_hint = QLabel("定义发票记录的自定义标签字段，将在表格中作为可编辑列显示。")
+        tag_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        tag_hint.setWordWrap(True)
+        lay.addWidget(tag_hint)
+        tag_row = QHBoxLayout()
+        tag_row.setSpacing(8)
+        self.edit_tag_name = QLineEdit()
+        self.edit_tag_name.setPlaceholderText("新标签名（如：项目名称）")
+        self.edit_tag_name.setFixedHeight(32)
+        btn_add_tag = QPushButton("添加标签")
+        btn_add_tag.setFixedHeight(32)
+        btn_add_tag.clicked.connect(self._add_tag_template)
+        tag_row.addWidget(self.edit_tag_name, 1)
+        tag_row.addWidget(btn_add_tag)
+        lay.addLayout(tag_row)
+        self.tag_list = QListWidget()
+        self.tag_list.setMaximumHeight(100)
+        self.tag_list.setStyleSheet(f"background:{BG_ALT}; border:none; font-size:12px;")
+        self._load_tag_templates()
+        lay.addWidget(self.tag_list)
+        btn_del_tag = QPushButton("删除选中标签")
+        btn_del_tag.setFixedHeight(28)
+        btn_del_tag.clicked.connect(self._del_tag_template)
+        lay.addWidget(btn_del_tag)
+
+        lay.addWidget(self._hline())
+        lay.addWidget(self._section_title("手动操作"))
+        manual_row = QHBoxLayout()
+        manual_row.setSpacing(8)
+        btn_backup = QPushButton("导出 ZIP 备份…")
+        btn_backup.setFixedHeight(32)
+        btn_backup.clicked.connect(self._backup_data)
+        btn_restore = QPushButton("从 ZIP 恢复…")
+        btn_restore.setFixedHeight(32)
+        btn_restore.clicked.connect(self._restore_data)
+        manual_row.addWidget(btn_backup)
+        manual_row.addWidget(btn_restore)
+        manual_row.addStretch()
+        lay.addLayout(manual_row)
+
+        lay.addStretch()
+        return w
+
+    def _build_backup_tab(self):
+        from ui.widgets.strategy_card import StrategyCard
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(8)
+
+        # 本地策略
+        lay.addWidget(self._section_title("本地多盘备份"))
+        self._local_card = StrategyCard("local", self._app._config.get_local_strategy())
+        self._local_card.strategy_changed.connect(self._on_local_strategy_changed)
+        lay.addWidget(self._local_card)
+        self.lbl_local_stats = QLabel()
+        self.lbl_local_stats.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        self.lbl_local_stats.setWordWrap(True)
+        lay.addWidget(self.lbl_local_stats)
+        self._refresh_local_stats()
+
+        lay.addWidget(self._hline())
+
+        # WebDAV 策略
+        lay.addWidget(self._section_title("远程备份（WebDAV）"))
+        self._webdav_card = StrategyCard("webdav", self._app._config.get_webdav_strategy())
+        self._webdav_card.strategy_changed.connect(self._on_webdav_strategy_changed)
+        lay.addWidget(self._webdav_card)
+
+        wd_hint = QLabel("支持群晖、Nextcloud 等 WebDAV 服务器，增量同步仅上传变更文件。")
+        wd_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        wd_hint.setWordWrap(True)
+        lay.addWidget(wd_hint)
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        url_row.addWidget(QLabel("地址"))
+        self.edit_wd_url = QLineEdit()
+        self.edit_wd_url.setPlaceholderText("https://nas.local:5006/invoice-backup/")
+        self.edit_wd_url.setFixedHeight(32)
+        url_row.addWidget(self.edit_wd_url, 1)
+        lay.addLayout(url_row)
+        auth_row = QHBoxLayout()
+        auth_row.setSpacing(8)
+        auth_row.addWidget(QLabel("账号"))
+        self.edit_wd_user = QLineEdit()
+        self.edit_wd_user.setPlaceholderText("用户名")
+        self.edit_wd_user.setFixedHeight(32)
+        auth_row.addWidget(self.edit_wd_user, 1)
+        auth_row.addWidget(QLabel("密码"))
+        self.edit_wd_pass = QLineEdit()
+        self.edit_wd_pass.setPlaceholderText("密码")
+        self.edit_wd_pass.setEchoMode(QLineEdit.Password)
+        self.edit_wd_pass.setFixedHeight(32)
+        auth_row.addWidget(self.edit_wd_pass, 1)
+        lay.addLayout(auth_row)
+        wd_btn_row = QHBoxLayout()
+        wd_btn_row.setSpacing(8)
+        btn_test = QPushButton("测试连接")
+        btn_test.setFixedHeight(32)
+        btn_test.clicked.connect(self._test_webdav)
+        btn_sync = QPushButton("立即同步")
+        btn_sync.setFixedHeight(32)
+        btn_sync.clicked.connect(self._sync_webdav_now)
+        btn_restore = QPushButton("从远程恢复…")
+        btn_restore.setFixedHeight(32)
+        btn_restore.clicked.connect(self._restore_webdav)
+        wd_btn_row.addWidget(btn_test)
+        wd_btn_row.addWidget(btn_sync)
+        wd_btn_row.addWidget(btn_restore)
+        wd_btn_row.addStretch()
+        lay.addLayout(wd_btn_row)
+
+        lay.addStretch()
+        return w
+
+    def _build_mcp_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(8)
+
+        lay.addWidget(self._section_title("MCP 服务"))
+        mcp_hint = QLabel(
+            "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
+            "支持 Claude Code、Cursor、Continue 等工具，通过 stdio 协议通信，不绑端口、无冲突。"
+        )
+        mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
+        mcp_hint.setWordWrap(True)
+        lay.addWidget(mcp_hint)
+
+        import sys as _sys
+        if getattr(_sys, 'frozen', False):
+            self._mcp_cmd_text = f'"{_sys.executable}" --mcp'
+        else:
+            self._mcp_cmd_text = "uv run python src/invoice_tool.py --mcp"
+        mcp_cmd_row = QHBoxLayout()
+        mcp_cmd_row.setSpacing(8)
+        self.edit_mcp_cmd = QLineEdit()
+        self.edit_mcp_cmd.setReadOnly(True)
+        self.edit_mcp_cmd.setFixedHeight(32)
+        self.edit_mcp_cmd.setStyleSheet(
+            f"background:{BG_ALT}; border:none; "
+            "font-family:Consolas,monospace; padding:2px 6px; font-size:11px;")
+        self.edit_mcp_cmd.setText(self._mcp_cmd_text)
+        mcp_cmd_row.addWidget(self.edit_mcp_cmd, 1)
+        lay.addLayout(mcp_cmd_row)
+
+        mcp_btn_row = QHBoxLayout()
+        mcp_btn_row.setSpacing(8)
+        btn_copy = QPushButton("复制 MCP 命令")
+        btn_copy.setFixedHeight(32)
+        btn_copy.clicked.connect(self._copy_mcp_cmd)
+        btn_install = QPushButton("自动配置 Claude Code")
+        btn_install.setFixedHeight(32)
+        btn_install.clicked.connect(self._install_mcp)
+        mcp_btn_row.addWidget(btn_copy)
+        mcp_btn_row.addWidget(btn_install)
+        mcp_btn_row.addStretch()
+        lay.addLayout(mcp_btn_row)
+
+        lay.addStretch()
+        return w
 
     # ── 策略卡片事件 ─────────────────────────────
 
