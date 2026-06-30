@@ -9,34 +9,24 @@ a = Analysis(
         ('src/ui/icons', 'ui/icons'),
     ],
     hiddenimports=[
-        # 方法内延迟导入（PyInstaller 静态分析可能遗漏）
         'ui.theme',
         'ui.dialogs.pdf_viewer',
         'ui.dialogs.add_attachment',
         'ui.dialogs.attachment_viewer',
-        'services.export_service',
-        # 核心依赖
-        'database',
-        'backup',
-        'config_manager',
-        'invoice_parser',
-        'models',
-        'repository',
-        'filters',
-        'utils',
-        'worker',
-        'logger',
-        'version',
-        # 对话框模块
         'ui.dialogs.image_viewer',
         'ui.dialogs.settings',
         'ui.dialogs.delete_confirm',
         'ui.dialogs.contract_manager',
         'ui.dialogs.invoice_manager',
-        # 第三方隐式依赖
-        'pdfplumber',
-        'openpyxl',
-        'PIL',
+        'ui.dialogs.import_preview',
+        'ui.widgets.strategy_card',
+        'services.export_service',
+        'services.invoice_service',
+        'database', 'backup', 'config_manager',
+        'invoice_parser', 'models', 'repository',
+        'filters', 'utils', 'worker',
+        'logger', 'version', 'storage',
+        'pdfplumber', 'openpyxl', 'PIL',
     ],
     hookspath=[],
     hooksconfig={},
@@ -61,7 +51,7 @@ a = Analysis(
         'PyQt5.QtXmlPatterns',      # 不需要 XSLT
     ],
     noarchive=False,
-    optimize=0,
+    optimize=2,
 )
 pyz = PYZ(a.pure)
 
@@ -74,7 +64,7 @@ exe = EXE(
     name='发票归档',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=True,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
