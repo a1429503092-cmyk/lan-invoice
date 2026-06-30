@@ -285,7 +285,7 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._section_title("MCP 服务"))
         mcp_hint = QLabel(
             "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
-            "支持 Claude Code、WorkBuddy（阿里）、Cursor 等工具。\n"
+            "支持 Claude Code、CodeBuddy（腾讯）、WorkBuddy（阿里）。\n"
             "通过 stdio 协议通信，不绑端口、无冲突。"
         )
         mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
@@ -314,14 +314,18 @@ class SettingsDialog(QDialog):
         btn_copy = QPushButton("复制命令")
         btn_copy.setFixedHeight(32)
         btn_copy.clicked.connect(self._copy_mcp_cmd)
-        btn_claude = QPushButton("配置 Claude Code")
+        btn_claude = QPushButton("配置 Claude")
         btn_claude.setFixedHeight(32)
         btn_claude.clicked.connect(self._install_mcp_claude)
+        btn_codebuddy = QPushButton("配置 CodeBuddy")
+        btn_codebuddy.setFixedHeight(32)
+        btn_codebuddy.clicked.connect(self._install_mcp_codebuddy)
         btn_wb = QPushButton("配置 WorkBuddy")
         btn_wb.setFixedHeight(32)
         btn_wb.clicked.connect(self._install_mcp_workbuddy)
         mcp_btn_row.addWidget(btn_copy)
         mcp_btn_row.addWidget(btn_claude)
+        mcp_btn_row.addWidget(btn_codebuddy)
         mcp_btn_row.addWidget(btn_wb)
         mcp_btn_row.addStretch()
         lay.addLayout(mcp_btn_row)
@@ -632,9 +636,17 @@ class SettingsDialog(QDialog):
         entry = self._make_mcp_entry(sys)
         self._write_mcp_config(cfg_dir, cfg_file, entry, "Claude Code")
 
+    def _install_mcp_codebuddy(self):
+        """写入 CodeBuddy ~/.codebuddy/mcp.json"""
+        import sys
+        cfg_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
+        cfg_file = os.path.join(cfg_dir, "mcp.json")
+        entry = self._make_mcp_entry(sys)
+        self._write_mcp_config(cfg_dir, cfg_file, entry, "CodeBuddy")
+
     def _install_mcp_workbuddy(self):
         """写入 WorkBuddy ~/.workbuddy/mcp.json"""
-        import json, sys
+        import sys
         cfg_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
         cfg_file = os.path.join(cfg_dir, "mcp.json")
         entry = self._make_mcp_entry(sys)
