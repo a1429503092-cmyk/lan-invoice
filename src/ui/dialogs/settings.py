@@ -285,7 +285,8 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._section_title("MCP 服务"))
         mcp_hint = QLabel(
             "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
-            "支持 Claude Code、Cursor、Continue 等工具，通过 stdio 协议通信，不绑端口、无冲突。"
+            "支持 Claude Code、WorkBuddy（阿里）、Cursor 等工具。\n"
+            "通过 stdio 协议通信，不绑端口、无冲突。"
         )
         mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         mcp_hint.setWordWrap(True)
@@ -310,14 +311,18 @@ class SettingsDialog(QDialog):
 
         mcp_btn_row = QHBoxLayout()
         mcp_btn_row.setSpacing(8)
-        btn_copy = QPushButton("复制 MCP 命令")
+        btn_copy = QPushButton("复制命令")
         btn_copy.setFixedHeight(32)
         btn_copy.clicked.connect(self._copy_mcp_cmd)
-        btn_install = QPushButton("自动配置 Claude Code")
-        btn_install.setFixedHeight(32)
-        btn_install.clicked.connect(self._install_mcp)
+        btn_claude = QPushButton("配置 Claude Code")
+        btn_claude.setFixedHeight(32)
+        btn_claude.clicked.connect(self._install_mcp_claude)
+        btn_wb = QPushButton("配置 WorkBuddy")
+        btn_wb.setFixedHeight(32)
+        btn_wb.clicked.connect(self._install_mcp_workbuddy)
         mcp_btn_row.addWidget(btn_copy)
-        mcp_btn_row.addWidget(btn_install)
+        mcp_btn_row.addWidget(btn_claude)
+        mcp_btn_row.addWidget(btn_wb)
         mcp_btn_row.addStretch()
         lay.addLayout(mcp_btn_row)
 
@@ -618,13 +623,37 @@ class SettingsDialog(QDialog):
         QMessageBox.information(self, "已复制",
                                 "MCP 命令已复制到剪贴板。\n\n在 AI 客户端中粘贴此命令即可。")
 
-    def _install_mcp(self):
-        """自动写入 Claude Code settings.json"""
+    def _install_mcp_claude(self):
+        """写入 Claude Code settings.json"""
         import json, sys
         cfg_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")), "Claude")
         cfg_file = os.path.join(cfg_dir, "settings.json")
+        entry = self._make_mcp_entry(sys)
+        self._write_mcp_config(cfg_dir, cfg_file, entry, "Claude Code")
 
+    def _install_mcp_workbuddy(self):
+        """写入 WorkBuddy ~/.workbuddy/mcp.json"""
+        import json, sys
+        cfg_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
+        cfg_file = os.path.join(cfg_dir, "mcp.json")
+        entry = self._make_mcp_entry(sys)
+        entry["type"] = "stdio"
+        self._write_mcp_config(cfg_dir, cfg_file, entry, "WorkBuddy")
+
+    def _make_mcp_entry(self, sys) -> dict:
+        if getattr(sys, 'frozen', False):
+            return {"command": sys.executable, "args": ["--mcp"]}
+        proj = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))))
+        return {
+            "command": "uv",
+            "args": ["run", "python", "src/invoice_tool.py", "--mcp"],
+            "cwd": proj,
+        }
+
+    def _write_mcp_config(self, cfg_dir: str, cfg_file: str, entry: dict, name: str):
+        import json
         os.makedirs(cfg_dir, exist_ok=True)
         cfg = {}
         if os.path.exists(cfg_file):
@@ -633,28 +662,15 @@ class SettingsDialog(QDialog):
                     cfg = json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
-
-        if getattr(sys, 'frozen', False):
-            entry = {"command": sys.executable, "args": ["--mcp"]}
-        else:
-            proj = os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__)))))
-            entry = {
-                "command": "uv",
-                "args": ["run", "python", "src/invoice_tool.py", "--mcp"],
-                "cwd": proj,
-            }
-
         servers = cfg.setdefault("mcpServers", {})
         servers["invoice"] = entry
-
         try:
             with open(cfg_file, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
             QMessageBox.information(
                 self, "配置完成",
-                f"已写入 Claude Code 配置：\n{cfg_file}\n\n"
-                "重启 Claude Code 后即可使用 MCP 工具。"
+                f"已写入 {name} 配置：\n{cfg_file}\n\n"
+                "重启 {name} 后即可使用 MCP 工具。"
             )
         except OSError as e:
             QMessageBox.warning(self, "配置失败",
