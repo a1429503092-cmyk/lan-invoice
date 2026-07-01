@@ -195,8 +195,9 @@ class Database:
     def save(self, invoices: list[Invoice]) -> None:
         try:
             with sqlite3.connect(self._db_path) as conn:
-                conn.execute("DELETE FROM invoices")
+                conn.execute("PRAGMA foreign_keys=ON")
                 conn.execute("DELETE FROM invoice_tags")
+                conn.execute("DELETE FROM invoices")
                 for inv in invoices:
                     conn.execute("""
                         INSERT INTO invoices (
@@ -251,6 +252,7 @@ class Database:
 
     def delete(self, invoice_no: str) -> None:
         with sqlite3.connect(self._db_path) as conn:
+            conn.execute("PRAGMA foreign_keys=ON")
             conn.execute(
                 "DELETE FROM invoices WHERE invoice_no = ?", (invoice_no,))
             conn.commit()
