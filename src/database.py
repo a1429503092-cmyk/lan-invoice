@@ -34,7 +34,12 @@ CREATE TABLE IF NOT EXISTS invoices (
     remark TEXT DEFAULT '',
     error TEXT DEFAULT '',
     updated_at TEXT DEFAULT (datetime('now','localtime'))
-)"""
+);
+CREATE INDEX IF NOT EXISTS idx_invoice_no ON invoices(invoice_no);
+CREATE INDEX IF NOT EXISTS idx_invoice_date ON invoices(invoice_date);
+CREATE INDEX IF NOT EXISTS idx_invoice_type ON invoices(invoice_type);
+CREATE INDEX IF NOT EXISTS idx_seller_name ON invoices(seller_name);
+"""
 
 
 class Database:
@@ -72,7 +77,7 @@ class Database:
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
-            conn.execute(_DDL)
+            conn.executescript(_DDL)
             conn.commit()
 
     # ── 查询 ──────────────────────────────────
@@ -164,6 +169,22 @@ class Database:
             raise
         else:
             log.debug("数据已保存: %d 条 → %s", len(invoices), self._db_path)
+
+    # ── 查询 ──────────────────────────────────
+
+    def find_by_invoice_no(self, invoice_no: str) -> Invoice | None:
+        """按发票号精确查找（走 idx_invoice_no 索引）"""
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT * FROM invoices WHERE invoice_no = ?",
+                    (invoice_no,)).fetchone()
+                if row:
+                    return self._row_to_invoice(dict(row))
+        except sqlite3.Error:
+            pass
+        return None
 
     # ── 删除 ──────────────────────────────────
 

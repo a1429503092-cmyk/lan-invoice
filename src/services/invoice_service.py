@@ -170,8 +170,7 @@ class InvoiceService:
         if remark is not None:
             inv.remark = str(remark)
 
-        existing = self._db.load()
-        if inv.invoice_no and any(i.invoice_no == inv.invoice_no for i in existing):
+        if inv.invoice_no and self._db.find_by_invoice_no(inv.invoice_no):
             return {"status": "duplicate", "invoice_no": inv.invoice_no,
                     "message": f"发票号 {inv.invoice_no} 已存在"}
 
@@ -182,6 +181,7 @@ class InvoiceService:
             return {"error": "PDF 文件复制失败，磁盘可能已满或无写入权限"}
         inv.pdf_path = copied
 
+        existing = self._db.load()
         existing.append(inv)
         self._db.save(existing)
         self._post_write()
@@ -269,12 +269,10 @@ class InvoiceService:
 
     def update_invoice(self, invoice_no: str, tags: dict | None = None,
                        remark: str | None = None) -> dict:
+        if not self._db.find_by_invoice_no(invoice_no):
+            return {"error": f"未找到发票号 {invoice_no}"}
         invs = self._db.load()
-        target = None
-        for inv in invs:
-            if inv.invoice_no == invoice_no:
-                target = inv
-                break
+        target = next((i for i in invs if i.invoice_no == invoice_no), None)
         if not target:
             return {"error": f"未找到发票号 {invoice_no}"}
 
