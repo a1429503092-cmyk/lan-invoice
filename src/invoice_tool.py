@@ -963,8 +963,7 @@ class InvoiceApp(QMainWindow):
         if hasattr(self, '_backup') and hasattr(self, '_db') and local_s["enabled"] \
                 and local_s["trigger"] in ("on_close", "scheduled"):
             self._db.optimize()
-            self._backup._last_backup_time = 0  # 绕过防抖
-            count = self._backup.backup(self._db.data_file)
+            count = self._backup.force_backup(self._db.data_file)
             self._backup.cleanup(keep_days=local_s["retention_days"],
                                  min_keep=local_s["min_keep"],
                                  max_keep=local_s["max_keep"])

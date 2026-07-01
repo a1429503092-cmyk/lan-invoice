@@ -80,6 +80,11 @@ class BackupService:
 
     # ── 备份 ──────────────────────────────────
 
+    def force_backup(self, db_path: str) -> int:
+        """绕过防抖强制执行一次备份（供关闭窗口等关键时机使用）"""
+        self._last_backup_time = 0
+        return self.backup(db_path)
+
     def backup(self, db_path: str) -> int:
         if not os.path.exists(db_path):
             log.warning("备份跳过：源文件不存在 %s", db_path)
