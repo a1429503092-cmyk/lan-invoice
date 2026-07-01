@@ -977,7 +977,9 @@ class InvoiceApp(QMainWindow):
         webdav_s = self._config.get_webdav_strategy()
         if webdav_s["enabled"] and webdav_s["url"] \
                 and webdav_s["trigger"] in ("on_close", "scheduled"):
-            self._do_webdav_sync(silent=False)
+            wd_thread = self._do_webdav_sync(silent=False)
+            if wd_thread and not wd_thread.wait(5000):
+                log.warning("WebDAV 同步未在 5 秒内完成")
         event.accept()
 
     def _open_settings(self):
@@ -1083,6 +1085,7 @@ class InvoiceApp(QMainWindow):
             self.status.showMessage("WebDAV 同步中…")
         thread = _SyncThread(self)
         thread.start()
+        return thread
 
     def _do_local_backup(self, strategy: dict | None = None):
         """执行本地多盘备份，备份前清理数据库碎片，使用策略中的保留参数"""

@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from logger import getLogger
+from version import APP_VERSION
 log = getLogger(__name__)
 
 from ui.theme import (TEXT, TEXT_SEC, TEXT_DIM, BG_ALT, BORDER_LIGHT)
@@ -83,7 +84,7 @@ class SettingsDialog(QDialog):
         lbl_title.setStyleSheet(f"font-size:15px; font-weight:bold; color:{TEXT};")
         title_row.addWidget(lbl_title)
         title_row.addStretch()
-        lbl_ver = QLabel(f"v{getattr(self._app, 'APP_VERSION', '')}")
+        lbl_ver = QLabel(f"v{APP_VERSION}")
         lbl_ver.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         title_row.addWidget(lbl_ver)
         btn_check = QPushButton("检查更新")
@@ -561,8 +562,10 @@ class SettingsDialog(QDialog):
         json_path = os.path.join(new_dir, "invoices_data.json")
         if os.path.exists(json_path):
             self._app._db.migrate_from_json(json_path)
-        self._app._svc = InvoiceService(self._app._db, self._app._attachment_dir,
+        self._app._svc = InvoiceService(self._app._db, self._app._backup,
+                                         self._app._config, self._app._data_dir,
                                          os.path.join(new_dir, "invoices"))
+        self._app._svc.enable_webdav_sync(True)
 
         self._app._config.data_dir = new_dir
         self._app._config.save()
@@ -681,7 +684,7 @@ class SettingsDialog(QDialog):
             QMessageBox.information(
                 self, "配置完成",
                 f"已写入 {name} 配置：\n{cfg_file}\n\n"
-                "重启 {name} 后即可使用 MCP 工具。"
+                f"重启 {name} 后即可使用 MCP 工具。"
             )
         except OSError as e:
             QMessageBox.warning(self, "配置失败",
