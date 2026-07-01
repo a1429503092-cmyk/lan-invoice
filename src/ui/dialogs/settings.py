@@ -2,6 +2,7 @@
 """设置对话框：数据目录配置 + 数据备份恢复"""
 
 import os
+import sys
 import shutil
 import zipfile
 from datetime import datetime
@@ -292,9 +293,8 @@ class SettingsDialog(QDialog):
         mcp_hint.setWordWrap(True)
         lay.addWidget(mcp_hint)
 
-        import sys as _sys
-        if getattr(_sys, 'frozen', False):
-            self._mcp_cmd_text = f'"{_sys.executable}" --mcp'
+        if getattr(sys, 'frozen', False):
+            self._mcp_cmd_text = f'"{sys.executable}" --mcp'
         else:
             self._mcp_cmd_text = "uv run python src/invoice_tool.py --mcp"
         mcp_cmd_row = QHBoxLayout()
@@ -630,32 +630,25 @@ class SettingsDialog(QDialog):
                                 "MCP 命令已复制到剪贴板。\n\n在 AI 客户端中粘贴此命令即可。")
 
     def _install_mcp_claude(self):
-        """写入 Claude Code settings.json"""
-        import json, sys
         cfg_dir = os.path.join(
             os.environ.get("APPDATA", os.path.expanduser("~")), "Claude")
-        cfg_file = os.path.join(cfg_dir, "settings.json")
-        entry = self._make_mcp_entry(sys)
-        self._write_mcp_config(cfg_dir, cfg_file, entry, "Claude Code")
+        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "settings.json"),
+                               self._make_mcp_entry(), "Claude Code")
 
     def _install_mcp_codebuddy(self):
-        """写入 CodeBuddy ~/.codebuddy/mcp.json"""
-        import sys
         cfg_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        cfg_file = os.path.join(cfg_dir, "mcp.json")
-        entry = self._make_mcp_entry(sys)
-        self._write_mcp_config(cfg_dir, cfg_file, entry, "CodeBuddy")
+        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "mcp.json"),
+                               self._make_mcp_entry(), "CodeBuddy")
 
     def _install_mcp_workbuddy(self):
-        """写入 WorkBuddy ~/.workbuddy/mcp.json"""
-        import sys
         cfg_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        cfg_file = os.path.join(cfg_dir, "mcp.json")
-        entry = self._make_mcp_entry(sys)
+        entry = self._make_mcp_entry()
         entry["type"] = "stdio"
-        self._write_mcp_config(cfg_dir, cfg_file, entry, "WorkBuddy")
+        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "mcp.json"),
+                               entry, "WorkBuddy")
 
-    def _make_mcp_entry(self, sys) -> dict:
+    @staticmethod
+    def _make_mcp_entry() -> dict:
         if getattr(sys, 'frozen', False):
             return {"command": sys.executable, "args": ["--mcp"]}
         proj = os.path.dirname(os.path.dirname(os.path.dirname(
