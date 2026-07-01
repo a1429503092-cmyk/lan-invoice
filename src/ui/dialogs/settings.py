@@ -10,7 +10,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QFrame, QListWidget, QCheckBox, QComboBox,
-    QSpinBox
+    QSpinBox, QTabWidget, QWidget
 )
 from PyQt5.QtCore import Qt
 from logger import getLogger
@@ -73,8 +73,6 @@ class SettingsDialog(QDialog):
     # ── UI 构建 ─────────────────────────────────
 
     def _build_ui(self):
-        from PyQt5.QtWidgets import QTabWidget
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(8)
