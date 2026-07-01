@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS invoices (
     error TEXT DEFAULT '',
     updated_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS invoice_tags (
+    invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    value TEXT DEFAULT '',
+    PRIMARY KEY (invoice_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_name_value ON invoice_tags(name, value);
 CREATE INDEX IF NOT EXISTS idx_invoice_no ON invoices(invoice_no);
 CREATE INDEX IF NOT EXISTS idx_invoice_date ON invoices(invoice_date);
 CREATE INDEX IF NOT EXISTS idx_invoice_type ON invoices(invoice_type);
@@ -55,30 +62,62 @@ class Database:
         return self._db_path
 
     def _init_schema(self):
-        """初始化表结构。新文件自动建表，已有文件不做侵入式操作。
-        损坏检测和恢复交由上层 _init_storage 处理。"""
+        """初始化表结构。新文件自动建表，已有文件做迁移。"""
         if os.path.exists(self._db_path) and os.path.getsize(self._db_path) > 0:
-            # 已有数据库：轻量预检，不修改文件
             try:
                 with sqlite3.connect(self._db_path) as conn:
                     result = conn.execute(
                         "PRAGMA integrity_check").fetchone()
-                if result[0] != "ok":
-                    log.warning("数据库完整性预检失败: %s", self._db_path)
-                return
+                    if result[0] != "ok":
+                        log.warning("数据库完整性预检失败: %s", self._db_path)
+                        return
+                # 确保新表存在 + 执行迁移
+                self._ensure_schema()
             except sqlite3.DatabaseError:
-                log.warning("数据库文件无法打开，将交由备份恢复: %s",
-                            self._db_path)
-                return
-        # 新建数据库
-        self._try_init_schema()
+                log.warning("数据库文件无法打开: %s", self._db_path)
+            return
+        self._ensure_schema()
 
-    def _try_init_schema(self):
+    def _ensure_schema(self):
+        """保证表结构最新：建新表 + 执行数据迁移"""
         with sqlite3.connect(self._db_path) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.executescript(_DDL)
             conn.commit()
+        self._migrate_tags_json_to_table()
+
+    def _migrate_tags_json_to_table(self):
+        """将 invoices.tags JSON 列迁移到 invoice_tags 表（幂等，只执行一次）"""
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                # 检查是否有未迁移的 JSON tags 数据
+                has_tags_col = conn.execute(
+                    "SELECT 1 FROM pragma_table_info('invoices') WHERE name='tags'"
+                ).fetchone()
+                if not has_tags_col:
+                    return  # 已迁移完成（旧 tags 列已删除）
+                # 查询所有有 tags 数据的发票
+                rows = conn.execute(
+                    "SELECT id, tags FROM invoices WHERE tags IS NOT NULL AND tags != '{}'"
+                ).fetchall()
+                if not rows:
+                    return
+                migrated = 0
+                for inv_id, tags_json in rows:
+                    tags = self._parse_json_dict(tags_json)
+                    for name, value in tags.items():
+                        conn.execute(
+                            "INSERT OR IGNORE INTO invoice_tags(invoice_id, name, value) "
+                            "VALUES (?, ?, ?)",
+                            (inv_id, name, str(value) if value else ""),
+                        )
+                        migrated += 1
+                conn.commit()
+                if migrated:
+                    log.info("tags 迁移完成: %d 条 → invoice_tags 表", migrated)
+        except sqlite3.Error as e:
+            log.warning("tags 迁移失败（不影响主流程）: %s", e)
 
     # ── 查询 ──────────────────────────────────
 
@@ -88,7 +127,21 @@ class Database:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     "SELECT * FROM invoices ORDER BY id").fetchall()
-                return [self._row_to_invoice(r) for r in rows]
+                # 批量加载所有 tags（避免 N+1 查询）
+                all_tags: dict[int, dict[str, str]] = {}
+                tag_rows = conn.execute(
+                    "SELECT invoice_id, name, value FROM invoice_tags").fetchall()
+                for tr in tag_rows:
+                    all_tags.setdefault(tr["invoice_id"], {})[tr["name"]] = tr["value"]
+                invoices = []
+                for r in rows:
+                    inv = self._row_to_invoice(r)
+                    # 优先用 invoice_tags 表的数据，回退到 JSON 列（未迁移时）
+                    rid = r["id"]
+                    if rid in all_tags:
+                        inv.tags = all_tags[rid]
+                    invoices.append(inv)
+                return invoices
         except sqlite3.Error as e:
             log.error("数据加载失败: %s | %s", self._db_path, e)
             return []
@@ -143,6 +196,7 @@ class Database:
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("DELETE FROM invoices")
+                conn.execute("DELETE FROM invoice_tags")
                 for inv in invoices:
                     conn.execute("""
                         INSERT INTO invoices (
@@ -163,6 +217,13 @@ class Database:
                         json.dumps(inv.attachments, ensure_ascii=False),
                         inv.remark, inv.error,
                     ))
+                    inv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    for name, value in (inv.tags or {}).items():
+                        conn.execute(
+                            "INSERT INTO invoice_tags(invoice_id, name, value) "
+                            "VALUES (?, ?, ?)",
+                            (inv_id, name, str(value) if value else ""),
+                        )
                 conn.commit()
         except sqlite3.Error as e:
             log.critical("数据保存失败: %s | %s (数据未写入)", self._db_path, e)
