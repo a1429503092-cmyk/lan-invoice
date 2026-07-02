@@ -51,6 +51,17 @@ def write_version(old: str, new: str):
     print(f"版本号: {old} → {new}")
 
 
+def smoke_test():
+    print("冒烟测试…")
+    result = subprocess.run(
+        ["uv", "run", "python", "tests/test_smoke.py"],
+        check=False,
+    )
+    if result.returncode != 0:
+        sys.exit(f"冒烟测试失败 (exit={result.returncode})，中止发布")
+    print("冒烟测试通过")
+
+
 def build():
     print("构建 EXE...")
     subprocess.run(
@@ -160,6 +171,7 @@ def main():
     if ver != old_ver:
         write_version(old_ver, ver)
 
+    smoke_test()
     build()
 
     if dry:

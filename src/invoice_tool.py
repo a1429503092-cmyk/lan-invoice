@@ -1894,7 +1894,18 @@ def main():
 
 
 if __name__ == "__main__":
-    if "--mcp" in sys.argv:
+    if "--smoke" in sys.argv:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "tests"))
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "tests", "test_smoke.py")],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        )
+        sys.exit(result.returncode)
+    elif "--mcp" in sys.argv:
         from mcp_server import McpServer
         McpServer().run()
     elif "--http" in sys.argv:
