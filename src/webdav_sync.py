@@ -232,7 +232,7 @@ def _clean_old_versions(client, max_keep: int) -> int:
 
 def restore_from_webdav(data_dir: str, webdav_url: str, username: str = "",
                         password: str = "", progress: Callable[[str], None] = None) -> bool:
-    """从 WebDAV 一键恢复整个数据目录"""
+    """从 WebDAV 递归恢复整个数据目录"""
     try:
         client = _make_client(webdav_url, username, password)
     except (ImportError, Exception):
@@ -244,8 +244,7 @@ def restore_from_webdav(data_dir: str, webdav_url: str, username: str = "",
 
     report("获取远程文件列表…")
     try:
-        files = client.list(remote_path="/")
-        files = [f for f in files if f and not f.endswith("/")]
+        files = _list_recursive(client, "/")
     except Exception:
         return False
 
@@ -256,7 +255,6 @@ def restore_from_webdav(data_dir: str, webdav_url: str, username: str = "",
     report(f"恢复 {len(files)} 个文件…")
     count = 0
     for rel in files:
-        rel = rel.lstrip("/")
         lp = os.path.join(data_dir, rel)
         try:
             os.makedirs(os.path.dirname(lp), exist_ok=True)
@@ -267,3 +265,23 @@ def restore_from_webdav(data_dir: str, webdav_url: str, username: str = "",
 
     report(f"恢复完成: {count}/{len(files)}")
     return count > 0
+
+
+def _list_recursive(client, remote_path: str) -> list[str]:
+    """递归列出 WebDAV 远程路径下所有文件（跳过目录条目）"""
+    result: list[str] = []
+    try:
+        entries = client.list(remote_path=remote_path)
+    except Exception:
+        return result
+    for entry in entries:
+        if not entry:
+            continue
+        e = entry.rstrip("/")
+        if entry.endswith("/"):
+            # 目录 → 递归进入
+            sub = _list_recursive(client, e)
+            result.extend(sub)
+        else:
+            result.append(e)
+    return result

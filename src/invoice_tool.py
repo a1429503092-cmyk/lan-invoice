@@ -142,9 +142,12 @@ class InvoiceApp(QMainWindow):
         """初始化存储：迁移旧 JSON → 完整性检查 → 自动恢复"""
         json_path = os.path.join(self._data_dir, "invoices_data.json")
         if os.path.exists(json_path):
-            migrated = self._db.migrate_from_json(json_path)
-            if migrated > 0:
-                log.info("已从 JSON 迁移 %d 条记录到 SQLite", migrated)
+            try:
+                migrated = self._db.migrate_from_json(json_path)
+                if migrated > 0:
+                    log.info("已从 JSON 迁移 %d 条记录到 SQLite", migrated)
+            except Exception as e:
+                log.warning("JSON 迁移失败（继续启动）: %s", e)
         if not self._db.integrity_check():
             log.warning("数据库完整性检查失败，尝试从备份恢复…")
             if self._backup.restore(self._db.data_file):
@@ -159,10 +162,13 @@ class InvoiceApp(QMainWindow):
                     except OSError:
                         pass
                     self._db = Database(self._db.data_file)
-                    migrated = self._db.migrate_from_json(bak_path)
-                    if migrated > 0:
-                        log.info("已从 JSON 备份恢复 %d 条记录", migrated)
-                        return
+                    try:
+                        migrated = self._db.migrate_from_json(bak_path)
+                        if migrated > 0:
+                            log.info("已从 JSON 备份恢复 %d 条记录", migrated)
+                            return
+                    except Exception as e:
+                        log.warning("JSON 备份恢复失败: %s", e)
                 log.warning("无可用备份，重建空数据库")
                 try:
                     os.remove(self._db.data_file)
@@ -1707,17 +1713,13 @@ class InvoiceApp(QMainWindow):
         if dlg.exec_() != QDialog.Accepted:
             return
 
-        # 删除原始PDF并从 records 移除
+        # 删除关联文件（PDF + 附件）并从 records 移除
         deleted_files = 0
         failed_files  = []
         for rec in to_delete:
-            pdf_path = rec.get("pdf_path", "")
-            if pdf_path and os.path.exists(pdf_path):
-                try:
-                    os.remove(pdf_path)
-                    deleted_files += 1
-                except Exception as ex:
-                    failed_files.append(f"{os.path.basename(pdf_path)}：{ex}")
+            cnt, errs = self._svc.delete_invoice_files(rec)
+            deleted_files += cnt
+            failed_files.extend(errs)
             self.records.remove(rec)
 
         # 重建表格
@@ -1726,10 +1728,10 @@ class InvoiceApp(QMainWindow):
         self._save_data()
 
         msg = f"已删除 {len(to_delete)} 条记录"
-        log.info("删除 %d 条记录 (PDF 成功 %d, 失败 %d)",
+        log.info("删除 %d 条记录 (文件成功 %d, 失败 %d)",
                  len(to_delete), deleted_files, len(failed_files))
         if deleted_files:
-            msg += f"，{deleted_files} 个PDF文件已删除"
+            msg += f"，{deleted_files} 个关联文件已删除"
         if failed_files:
             msg += f"，{len(failed_files)} 个文件删除失败"
             QMessageBox.warning(self, "部分文件删除失败",

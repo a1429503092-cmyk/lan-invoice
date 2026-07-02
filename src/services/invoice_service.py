@@ -364,11 +364,9 @@ class InvoiceService:
             return {"error": f"未找到发票号 {invoice_no}"}
         invs.remove(target)
         self._db.save(invs)
-        if target.pdf_path and os.path.isfile(target.pdf_path):
-            try:
-                os.remove(target.pdf_path)
-            except OSError:
-                pass
+        del_count, _ = self.delete_invoice_files(target)
+        if del_count:
+            log.debug("已清理 %d 个关联文件 (发票=%s)", del_count, invoice_no)
         self._post_write()
         return {"status": "ok", "deleted": invoice_no}
 
@@ -397,15 +395,25 @@ class InvoiceService:
 
     @staticmethod
     def delete_invoice_files(inv: Invoice) -> tuple[int, list[str]]:
+        """删除发票关联的所有文件：PDF + 附件。返回 (成功数, 失败列表)"""
         deleted = 0
         failed = []
-        path = inv.pdf_path
-        if path and os.path.isfile(path):
-            try:
-                os.remove(path)
-                deleted += 1
-            except OSError as e:
-                failed.append(f"{os.path.basename(path)}：{e}")
+        # 删除 PDF
+        for path in ([inv.pdf_path] if inv.pdf_path else []):
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    deleted += 1
+                except OSError as e:
+                    failed.append(f"pdf:{os.path.basename(path)}：{e}")
+        # 删除附件（截图、合同、文档等）
+        for path in (inv.attachments or []):
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                    deleted += 1
+                except OSError as e:
+                    failed.append(f"附件:{os.path.basename(path)}：{e}")
         return deleted, failed
 
     # ── 初始化辅助 ────────────────────────────
