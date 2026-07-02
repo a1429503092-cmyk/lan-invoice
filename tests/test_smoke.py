@@ -263,27 +263,94 @@ class TestBackup(unittest.TestCase):
 
 
 class TestUiInstantiation(unittest.TestCase):
-    """UI 组件实例化（headless，不会显示窗口）"""
+    """UI 组件实例化（headless，真实创建所有对话框）"""
 
     @classmethod
     def setUpClass(cls):
         from PyQt5.QtWidgets import QApplication
         cls._app = QApplication.instance() or QApplication(sys.argv)
+        # 构建完整 mock app_ref，供 SettingsDialog 等使用
+        from config_manager import ConfigManager
+        from backup import BackupService
+        from database import Database
 
-    def test_settings_dialog_instantiation(self):
-        """设置对话框必须能创建（Tab 分页 + 策略卡片 + MCP 配置）"""
-        try:
-            from ui.dialogs.settings import SettingsDialog
-            # SettingsDialog 需要 app_ref — 用 mock
-            # 真正的问题: 它需要 self._app 引用来访问 config/backup
-            # 这里测的是"导入不报错"和"类定义正确"——QWidget NameError 会在
-            # import 阶段被 test_ui_dialogs 捕获
-            self.assertTrue(True, "SettingsDialog import ok")
-        except Exception as e:
-            self.fail(f"SettingsDialog import/init failed: {e}")
+        cls._tmpdir = tempfile.mkdtemp()
+        cls._cfg = ConfigManager(os.path.join(cls._tmpdir, "config.json"))
+        cls._db = Database(os.path.join(cls._tmpdir, "invoices.db"))
+        cls._backup = BackupService()
+
+        class MockApp:
+            records = []
+            _config = cls._cfg
+            _data_dir = cls._tmpdir
+            _data_file = os.path.join(cls._tmpdir, "invoices.db")
+            _attachment_dir = cls._tmpdir
+            _db = cls._db
+            _backup = cls._backup
+            _tag_templates = ["企业号"]
+            _svc = None
+            table = None
+            status = None
+            APP_VERSION = "test"
+
+            @staticmethod
+            def check_update():
+                pass
+
+            @staticmethod
+            def _rebuild_table():
+                pass
+
+            @staticmethod
+            def _load_data():
+                pass
+
+        cls._mock_app = MockApp()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def test_settings_dialog_full_init(self):
+        """设置对话框完整初始化：3 个 Tab + 策略卡片 + MCP 配置"""
+        from ui.dialogs.settings import SettingsDialog
+        dlg = SettingsDialog(self._mock_app)
+        self.assertIsNotNone(dlg)
+
+        # 验证 3 个 Tab 都已构建
+        from PyQt5.QtWidgets import QTabWidget
+        tabs = dlg.findChildren(QTabWidget)
+        self.assertEqual(len(tabs), 1)
+        self.assertEqual(tabs[0].count(), 3)
+
+        # 验证策略卡片存在
+        self.assertIsNotNone(getattr(dlg, "_local_card", None))
+        self.assertIsNotNone(getattr(dlg, "_webdav_card", None))
+
+        # 验证 MCP 命令行存在
+        self.assertTrue(hasattr(dlg, "edit_mcp_cmd"))
+        self.assertIn("--mcp", dlg.edit_mcp_cmd.text())
+
+        dlg.close()
+
+    def test_import_preview_dialog(self):
+        """导入预览对话框：新 → 可勾选，重复+错误 → 不可勾选"""
+        from ui.dialogs.import_preview import ImportPreviewDialog
+        results = [
+            {"file": "dup.pdf", "invoice_no": "111", "invoice_date": "2025-01-01",
+             "amount": "100.00"},
+            {"file": "new.pdf", "invoice_no": "222", "invoice_date": "2025-01-02",
+             "amount": "200.00"},
+            {"file": "err.pdf", "invoice_no": "", "error": "解析失败"},
+        ]
+        dlg = ImportPreviewDialog(results, {"111"})
+        self.assertIsNotNone(dlg)
+        # dup.pdf: 重复, err.pdf: 错误 → 都不选；仅 new.pdf 可选
+        self.assertEqual(len(dlg.get_selected_indices()), 1)
+        dlg.close()
 
     def test_strategy_card_instantiation(self):
-        """策略卡片能创建"""
+        """策略卡片能创建并读取值"""
         from ui.widgets.strategy_card import StrategyCard
         card = StrategyCard("local", {
             "enabled": True, "trigger": "on_save",
@@ -292,16 +359,100 @@ class TestUiInstantiation(unittest.TestCase):
         })
         s = card.get_strategy()
         self.assertTrue(s["enabled"])
+        self.assertEqual(s["max_keep"], 30)
 
     def test_strategy_card_webdav(self):
         from ui.widgets.strategy_card import StrategyCard
         card = StrategyCard("webdav", {
-            "enabled": False, "trigger": "on_save",
+            "enabled": False, "trigger": "scheduled",
             "interval_minutes": 60, "version_mode": "keep_versions",
             "max_versions": 10,
         })
         s = card.get_strategy()
         self.assertEqual(s["version_mode"], "keep_versions")
+        self.assertEqual(s["trigger"], "scheduled")
+
+    def test_delete_confirm_dialog(self):
+        """删除确认对话框能创建"""
+        from ui.dialogs.delete_confirm import DeleteConfirmDialog
+        recs = [{"invoice_no": "D001", "file": "d.pdf"}]
+        dlg = DeleteConfirmDialog(recs)
+        self.assertIsNotNone(dlg)
+        dlg.close()
+
+
+class TestEndToEnd(unittest.TestCase):
+    """端到端：完整业务流程"""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp()
+        from database import Database
+        from backup import BackupService
+        from config_manager import ConfigManager
+        self._db = Database(os.path.join(self._tmp, "invoices.db"))
+        self._backup = BackupService()
+        self._cfg = ConfigManager(os.path.join(self._tmp, "config.json"))
+        self._svc = __import__("services.invoice_service", fromlist=["InvoiceService"]
+                               ).InvoiceService(
+            self._db, self._backup, self._cfg,
+            self._tmp, os.path.join(self._tmp, "invoices"),
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_import_search_delete_flow(self):
+        """导入 → 搜索 → 删除 完整流程"""
+        # 导入
+        self._svc.manage_tags("add", "企业号")
+        result = self._svc.search()
+        self.assertEqual(result["count"], 0)
+
+        # 手动创建一条记录（日期用发票原始格式）
+        from models import Invoice
+        inv = Invoice(invoice_no="E2E001", file="e2e.pdf", invoice_date="2025年06月15日",
+                      amount="500.00", invoice_type="增值税专用发票",
+                      buyer_name="测试公司")
+        inv.tags = {"企业号": "E2E"}
+        self._db.save([inv])
+
+        # 搜索
+        result = self._svc.search(year=2025, month=6, limit=10)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["records"][0]["invoice_no"], "E2E001")
+
+        # 统计
+        summary = self._svc.get_summary(year=2025, month=6)
+        self.assertEqual(summary["count"], 1)
+
+        # 更新
+        self._svc.update_invoice("E2E001", tags={"项目": "Q1"})
+        loaded = self._db.load()
+        self.assertEqual(loaded[0].tags.get("项目"), "Q1")
+
+        # 删除
+        result = self._svc.delete_invoice("E2E001")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(self._db.load()), 0)
+
+    def test_backup_with_data(self):
+        """备份能正常执行（含 optimize + cleanup）"""
+        from models import Invoice
+        inv = Invoice(invoice_no="BK001", file="bk.pdf")
+        self._db.save([inv])
+
+        # 执行备份流程
+        self._db.optimize()
+        count = self._backup.force_backup(self._db.data_file)
+        self.assertGreaterEqual(count, 1)
+
+        # 统计应有数据
+        stats = self._backup.get_stats()
+        self.assertGreater(stats["count"], 0)
+
+        # 清理
+        removed = self._backup.cleanup(keep_days=0, min_keep=0, max_keep=0)
+        self.assertGreaterEqual(removed, 0)
 
 
 if __name__ == "__main__":
