@@ -188,7 +188,7 @@ VSVersionInfo(
          StringStruct(u'FileVersion', u'{ver}'),
          StringStruct(u'InternalName', u'发票归档'),
          StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
-         StringStruct(u'OriginalFilename', u'发票归档.exe'),
+         StringStruct(u'OriginalFilename', u'发票归档_v{ver}.exe'),
          StringStruct(u'ProductName', u'发票归档'),
          StringStruct(u'ProductVersion', u'{ver}')])
     ]),
@@ -236,7 +236,10 @@ def main():
     if not token:
         sys.exit("请设置环境变量 GITEE_TOKEN 或在项目根目录创建 .env 文件")
 
-    exe_path = os.path.join(DIST_DIR, "发票归档.exe")
+    exe_path = os.path.join(DIST_DIR, f"发票归档_v{ver}.exe")
+    src = os.path.join(DIST_DIR, "发票归档.exe")
+    if os.path.exists(src):
+        os.replace(src, exe_path)
     if not os.path.exists(exe_path):
         sys.exit(f"EXE 不存在: {exe_path}")
 
