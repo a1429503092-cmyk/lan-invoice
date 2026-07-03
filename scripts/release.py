@@ -158,6 +158,49 @@ def upload_asset(release_id: int, filepath: str, token: str):
     print(f"附件已上传: {filename} → {data.get('browser_download_url', '')}")
 
 
+def sync_version_info(ver: str):
+    """将版本号写入 version_info.txt，确保 EXE 右键属性版本号正确"""
+    vi = os.path.join(os.path.dirname(os.path.dirname(__file__)), "version_info.txt")
+    if not os.path.exists(vi):
+        print(f"version_info.txt 不存在，跳过: {vi}")
+        return
+    nums = tuple(int(x) for x in ver.split(".")) + (0,) * (4 - len(ver.split(".")))
+    nums = nums[:4]
+    content = f"""# UTF-8
+#
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={nums},
+    prodvers={nums},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404b0',
+        [StringStruct(u'CompanyName', u'GUYI33'),
+         StringStruct(u'FileDescription', u'发票归档 - 电子发票 PDF 批量识别与归档'),
+         StringStruct(u'FileVersion', u'{ver}'),
+         StringStruct(u'InternalName', u'发票归档'),
+         StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
+         StringStruct(u'OriginalFilename', u'发票归档.exe'),
+         StringStruct(u'ProductName', u'发票归档'),
+         StringStruct(u'ProductVersion', u'{ver}')])
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [0x0804, 0x04b0])])
+  ]
+)
+"""
+    with open(vi, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"version_info.txt → {ver}")
+
+
 def main():
     dry = "--dry" in sys.argv
     ver_arg = None
@@ -171,6 +214,7 @@ def main():
     if ver != old_ver:
         write_version(old_ver, ver)
 
+    sync_version_info(ver)
     smoke_test()
     build()
 
