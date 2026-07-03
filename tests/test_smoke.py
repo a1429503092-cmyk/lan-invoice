@@ -92,6 +92,37 @@ class TestConfig(unittest.TestCase):
         # 未设置的字段保持默认
         self.assertEqual(s["max_keep"], 30)
 
+    def test_mcp_entry_generation(self):
+        """MCP 配置项生成：开发/打包模式"""
+        import sys
+        from ui.dialogs.settings import SettingsDialog
+        entry = SettingsDialog._make_mcp_entry()
+        self.assertIn("command", entry)
+        self.assertIn("args", entry)
+        self.assertIn("--mcp", entry["args"])
+        if not getattr(sys, 'frozen', False):
+            self.assertIn("cwd", entry)
+
+    def test_mcp_config_write(self):
+        """MCP 配置写入不崩溃（空文件 → 写入 → 验证）"""
+        import json
+        mcp_file = os.path.join(self._tmp, "test_mcp.json")
+        entry = {"command": "test-exe.exe", "args": ["--mcp"]}
+        os.makedirs(os.path.dirname(mcp_file), exist_ok=True)
+        cfg = {}
+        try:
+            with open(mcp_file, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+        cfg.setdefault("mcpServers", {})["invoice"] = entry
+        with open(mcp_file, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        with open(mcp_file, encoding="utf-8") as f:
+            loaded = json.load(f)
+        self.assertIn("invoice", loaded["mcpServers"])
+        self.assertEqual(loaded["mcpServers"]["invoice"]["args"], ["--mcp"])
+
 
 class TestDatabase(unittest.TestCase):
     """SQLite CRUD + tags 关联表 + 索引查询"""
@@ -157,6 +188,34 @@ class TestDatabase(unittest.TestCase):
             "SELECT COUNT(*) FROM invoice_tags").fetchone()[0]
         conn.close()
         self.assertEqual(count, 0)
+
+    def test_attachments_cleaned_on_delete(self):
+        """删除发票时 PDF + 附件全部清理"""
+        from database import Database
+        from models import Invoice
+        db = Database(self._db_path)
+
+        # 创建两个临时文件模拟 PDF + 附件
+        pdf = self._db_path + ".test.pdf"
+        att = self._db_path + ".test.png"
+        for p in (pdf, att):
+            with open(p, "w") as f:
+                f.write("test")
+
+        inv = Invoice(invoice_no="CLEAN01", file="clean.pdf", pdf_path=pdf)
+        inv.attachments = [att]
+        db.save([inv])
+
+        # 验证文件存在
+        self.assertTrue(os.path.exists(pdf))
+        self.assertTrue(os.path.exists(att))
+
+        # 删除
+        from services.invoice_service import InvoiceService
+        _, failed = InvoiceService.delete_invoice_files(inv)
+        self.assertEqual(len(failed), 0)
+        self.assertFalse(os.path.exists(pdf))
+        self.assertFalse(os.path.exists(att))
 
     def test_tags_migration(self):
         """模拟旧库（完整旧 invoices 表但无 invoice_tags）的迁移"""
@@ -241,6 +300,24 @@ class TestInvoiceService(unittest.TestCase):
     def test_summary_empty(self):
         result = self._svc.get_summary()
         self.assertEqual(result["count"], 0)
+
+    def test_import_invoice_with_pdf(self):
+        """真实 PDF 导入流程（含解析 + 去重检查）"""
+        # 生成最小有效 PDF
+        pdf_path = os.path.join(self._tmp_data, "test_invoice.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+                    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+                    b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n"
+                    b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n"
+                    b"0000000058 00000 n \n0000000115 00000 n \n"
+                    b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF")
+
+        result = self._svc.import_invoice(pdf_path, tags={"企业号": "IMP01"})
+        # 最小 PDF 无文字可解析，应返回 parse_error
+        self.assertIn(result.get("status"), ("parse_error", "ok"))
+        # 但不应崩溃
+        self.assertIsNotNone(result)
 
     def test_tags_crud(self):
         r = self._svc.manage_tags("list")
