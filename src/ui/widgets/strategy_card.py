@@ -53,7 +53,7 @@ class StrategyCard(QWidget):
 
     def _build(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(6)
 
         s = self._strategy

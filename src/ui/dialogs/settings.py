@@ -125,7 +125,7 @@ class SettingsDialog(QDialog):
     def _build_general_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
 
         lay.addWidget(self._section_title("数据存储"))
@@ -207,7 +207,7 @@ class SettingsDialog(QDialog):
         from ui.widgets.strategy_card import StrategyCard
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
 
         # 本地策略
@@ -278,7 +278,7 @@ class SettingsDialog(QDialog):
     def _build_mcp_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
 
         lay.addWidget(self._section_title("MCP 服务"))
