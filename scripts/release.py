@@ -80,17 +80,28 @@ def git_commit_and_tag(ver: str):
     print(f"已推送 tag v{ver}")
 
 
-def create_release(ver: str, token: str) -> dict:
+def create_release(ver: str, token: str, changelog: str = "") -> dict:
+    if changelog:
+        changes_section = changelog
+    else:
+        changes_section = "详见提交记录"
     body = f"""## v{ver}
 
 构建日期：{datetime.now().strftime('%Y-%m-%d')}
 
+### 本次更新
+
+{changes_section}
+
+### 下载说明
+
 | 文件 | 说明 |
 |------|------|
-| 发票归档.exe | Windows 桌面程序 |
+| 发票归档_v{ver}.exe | 便携版，下载双击直接运行 |
+| 发票归档_v{ver}_portable.zip | 便携版压缩包 |
+| 发票归档_v{ver}_setup.exe | 安装版，含开始菜单和桌面快捷方式 |
 
-### 安装说明
-下载「发票归档.exe」放到任意目录，双击启动。
+> 如遇到 SmartScreen 拦截，点击「更多信息」→「仍要运行」即可。
 """
 
     params = urlencode({
@@ -251,24 +262,43 @@ def main():
     print(f"便携版 ZIP: {zip_path}")
 
     # Inno Setup 安装器（如果 ISCC 可用）
-    setup_path = os.path.join(DIST_DIR, f"发票归档_v{ver}_setup.exe")
+    setup_base = f"发票归档_v{ver}_setup"
     iss_path = os.path.join(DIST_DIR, f"setup_v{ver}.iss")
     _write_iss(iss_path, "发票归档", os.path.basename(exe_path), ver)
     iscc = shutil.which("iscc")
+    if not iscc:
+        user_iscc = os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                                 "Programs", "Inno Setup 6", "ISCC.exe")
+        if os.path.exists(user_iscc):
+            iscc = user_iscc
     if iscc:
-        subprocess.run([iscc, iss_path], check=True)
-        print(f"安装器: {setup_path}")
+        env = os.environ.copy()
+        iscc_dir = os.path.dirname(iscc)
+        env["PATH"] = iscc_dir + os.pathsep + env.get("PATH", "")
+        subprocess.run([iscc, f"/O{DIST_DIR}", f"/F{setup_base}",
+                        iss_path], check=True, env=env)
+        print(f"安装器: {DIST_DIR}/{setup_base}.exe")
     else:
         print("Inno Setup 未安装，跳过安装器打包")
+        setup_base = None
 
     if ver != old_ver:
         git_commit_and_tag(ver)
 
-    release = create_release(ver, token)
+    changelog = """\
+• 导入预览对话框全面升级：从 4 列扩展到 11 列（文件名/发票类型/购买方/
+  销售方/金额/税额/价税合计/发票号码/开票日期/状态），底部实时显示已选
+  发票的金额合计/税额合计/价税合计，点击表头可排序，新增「取消全选」按钮
+• 发布时自动生成便携版 ZIP（发票归档_vx.x.x_portable.zip）
+• 更新弹窗新增「跳过此版本」按钮，不再反复提醒同一版本
+• 安装版本信息（右键→属性→详细信息显示发布者、版本号、版权）"""
+    release = create_release(ver, token, changelog)
     upload_asset(release["id"], exe_path, token)
     upload_asset(release["id"], zip_path, token)
-    if os.path.exists(setup_path):
-        upload_asset(release["id"], setup_path, token)
+    if setup_base:
+        sp = os.path.join(DIST_DIR, f"{setup_base}.exe")
+        if os.path.exists(sp):
+            upload_asset(release["id"], sp, token)
     print(f"\n发布成功: https://gitee.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{ver}")
 
 
@@ -281,19 +311,15 @@ AppVersion={ver}
 AppPublisher=GUYI33
 DefaultDirName={{pf}}\\{app_name}
 DefaultGroupName={app_name}
-OutputDir=.
-OutputBaseFilename={exe_name.replace('.exe', '_setup')}
 Compression=lzma2/ultra64
 SolidCompression=yes
 UninstallDisplayName={app_name}
-PrivilegesRequired=admin
 
 [Files]
 Source: "{exe_name}"; DestDir: "{{app}}"
 
 [Icons]
 Name: "{{group}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
-Name: "{{group}}\\卸载 {app_name}"; Filename: "{{uninstallexe}}"
 Name: "{{commondesktop}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
 
 [Run]

@@ -2,8 +2,8 @@
 #
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(5, 3, 4, 0),
-    prodvers=(5, 3, 4, 0),
+    filevers=(5, 3, 7, 0),
+    prodvers=(5, 3, 7, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
         u'080404b0',
         [StringStruct(u'CompanyName', u'GUYI33'),
          StringStruct(u'FileDescription', u'发票归档 - 电子发票 PDF 批量识别与归档'),
-         StringStruct(u'FileVersion', u'5.3.4'),
+         StringStruct(u'FileVersion', u'5.3.7'),
          StringStruct(u'InternalName', u'发票归档'),
          StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
-         StringStruct(u'OriginalFilename', u'发票归档_v5.3.4.exe'),
+         StringStruct(u'OriginalFilename', u'发票归档_v5.3.7.exe'),
          StringStruct(u'ProductName', u'发票归档'),
-         StringStruct(u'ProductVersion', u'5.3.4')])
+         StringStruct(u'ProductVersion', u'5.3.7')])
     ]),
     VarFileInfo([VarStruct(u'Translation', [0x0804, 0x04b0])])
   ]
