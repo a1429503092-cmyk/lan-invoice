@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
     QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget,
-    QTextEdit
+    QTextBrowser
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QUrl
@@ -139,7 +139,8 @@ class AttachmentViewerDialog(QDialog):
         self.lbl_preview_img.setStyleSheet("background:transparent;")
         preview_layout.addWidget(self.lbl_preview_img)
 
-        self.text_preview = QTextEdit()
+        self.text_preview = QTextBrowser()
+        self.text_preview.setOpenExternalLinks(True)
         self.text_preview.setReadOnly(True)
         self.text_preview.hide()
         self.text_preview.setStyleSheet(
@@ -332,21 +333,22 @@ class AttachmentViewerDialog(QDialog):
             self.lbl_preview.show()
             return
         try:
-            import docx
-            doc = docx.Document(path)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            if paragraphs:
-                text = "\n".join(paragraphs[:50])  # 最多显示 50 段
-                if len(paragraphs) > 50:
-                    text += f"\n\n... 共 {len(paragraphs)} 段，仅显示前 50 段"
-                self.text_preview.setPlainText(text)
+            import mammoth
+            with open(path, "rb") as f:
+                result = mammoth.convert_to_html(f)
+            html = result.value
+            if html and html.strip():
+                # 限制过长内容
+                if len(html) > 50000:
+                    html = html[:50000] + "<p><i>... 内容过长，已截断</i></p>"
+                self.text_preview.setHtml(html)
                 self.text_preview.show()
                 return
         except Exception:
             pass
         self.btn_inline_open.setText("📄 用系统程序打开")
         self.btn_inline_open.show()
-        self.lbl_preview.setText("无法提取 Word 文本 — 点击按钮用系统程序打开")
+        self.lbl_preview.setText("无法预览 Word 文档 — 点击按钮用系统程序打开")
         self.lbl_preview.show()
 
     def _show_doc_preview(self, path, exists):
