@@ -144,6 +144,14 @@ class ConfigManager:
     # ── 数据目录 ─────────────────────────────
 
     @property
+    def skipped_version(self) -> str:
+        return self._data.get("skipped_version", "")
+
+    @skipped_version.setter
+    def skipped_version(self, v: str):
+        self._data["skipped_version"] = v
+
+    @property
     def data_dir(self) -> str:
         return self._data.get("data_dir", "")
 

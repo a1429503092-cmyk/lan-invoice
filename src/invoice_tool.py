@@ -112,6 +112,7 @@ class InvoiceApp(QMainWindow):
                  APP_VERSION, self._data_dir)
         QTimer.singleShot(500, self._check_desktop_shortcut)
         self._update_checker = UpdateChecker(APP_VERSION, self)
+        self._update_checker.set_skipped_version(self._config.skipped_version)
         self._update_checker.new_version_found.connect(self._on_new_version)
         self._update_checker.check_finished.connect(self._on_check_finished)
         QTimer.singleShot(3000, self._update_checker.check)
@@ -1037,13 +1038,20 @@ class InvoiceApp(QMainWindow):
             pass    # 静默失败，不影响主流程
 
     def _on_new_version(self, version: str, url: str):
-        reply = QMessageBox.question(
-            self, "发现新版本",
-            f"检测到新版本 v{version}\n当前版本：v{APP_VERSION}\n\n是否前往下载？",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-        )
-        if reply == QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("发现新版本")
+        msg.setText(f"检测到新版本 v{version}\n当前版本：v{APP_VERSION}")
+        btn_dl = msg.addButton("前往下载", QMessageBox.YesRole)
+        btn_skip = msg.addButton("跳过此版本", QMessageBox.NoRole)
+        btn_cancel = msg.addButton("稍后提醒", QMessageBox.RejectRole)
+        msg.setDefaultButton(btn_dl)
+        msg.exec_()
+        clicked = msg.clickedButton()
+        if clicked == btn_dl:
             QDesktopServices.openUrl(QUrl(url))
+        elif clicked == btn_skip:
+            self._config.skipped_version = version
+            self._config.save()
         self._manual_check_pending = False
 
     def _on_check_finished(self, ok: bool, current: str, _url: str):

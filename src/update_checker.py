@@ -13,8 +13,12 @@ class UpdateChecker(QObject):
     def __init__(self, current_version: str, parent=None):
         super().__init__(parent)
         self._current = current_version
+        self._skipped: str = ""
         self._nam = QNetworkAccessManager(self)
         self._nam.finished.connect(self._on_reply)
+
+    def set_skipped_version(self, ver: str):
+        self._skipped = ver
 
     def check(self):
         req = QNetworkRequest(QUrl(GITEE_API))
@@ -40,7 +44,10 @@ class UpdateChecker(QObject):
             if not download_url:
                 download_url = f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}"
             if self._version_gt(tag, self._current):
-                self.new_version_found.emit(tag, download_url)
+                if self._skipped and tag == self._skipped:
+                    self.check_finished.emit(True, self._current, "")
+                else:
+                    self.new_version_found.emit(tag, download_url)
             else:
                 self.check_finished.emit(True, self._current, "")
         except (json.JSONDecodeError, KeyError, TypeError, OSError):

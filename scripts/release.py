@@ -16,6 +16,7 @@ import re
 import subprocess
 import json
 import shutil
+import zipfile
 import http.client
 from urllib.parse import urlencode
 from datetime import datetime
@@ -243,12 +244,63 @@ def main():
     if not os.path.exists(exe_path):
         sys.exit(f"EXE 不存在: {exe_path}")
 
+    # 便携版 ZIP
+    zip_path = os.path.join(DIST_DIR, f"发票归档_v{ver}_portable.zip")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(exe_path, os.path.basename(exe_path))
+    print(f"便携版 ZIP: {zip_path}")
+
+    # Inno Setup 安装器（如果 ISCC 可用）
+    setup_path = os.path.join(DIST_DIR, f"发票归档_v{ver}_setup.exe")
+    iss_path = os.path.join(DIST_DIR, f"setup_v{ver}.iss")
+    _write_iss(iss_path, "发票归档", os.path.basename(exe_path), ver)
+    iscc = shutil.which("iscc")
+    if iscc:
+        subprocess.run([iscc, iss_path], check=True)
+        print(f"安装器: {setup_path}")
+    else:
+        print("Inno Setup 未安装，跳过安装器打包")
+
     if ver != old_ver:
         git_commit_and_tag(ver)
 
     release = create_release(ver, token)
     upload_asset(release["id"], exe_path, token)
+    upload_asset(release["id"], zip_path, token)
+    if os.path.exists(setup_path):
+        upload_asset(release["id"], setup_path, token)
     print(f"\n发布成功: https://gitee.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{ver}")
+
+
+def _write_iss(iss_path: str, app_name: str, exe_name: str, ver: str):
+    """生成 Inno Setup 脚本"""
+    content = f"""; Inno Setup Script — 自动生成
+[Setup]
+AppName={app_name}
+AppVersion={ver}
+AppPublisher=GUYI33
+DefaultDirName={{pf}}\\{app_name}
+DefaultGroupName={app_name}
+OutputDir=.
+OutputBaseFilename={exe_name.replace('.exe', '_setup')}
+Compression=lzma2/ultra64
+SolidCompression=yes
+UninstallDisplayName={app_name}
+PrivilegesRequired=admin
+
+[Files]
+Source: "{exe_name}"; DestDir: "{{app}}"
+
+[Icons]
+Name: "{{group}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
+Name: "{{group}}\\卸载 {app_name}"; Filename: "{{uninstallexe}}"
+Name: "{{commondesktop}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
+
+[Run]
+Filename: "{{app}}\\{exe_name}"; Description: "启动 {app_name}"; Flags: nowait postinstall
+"""
+    with open(iss_path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 if __name__ == "__main__":
