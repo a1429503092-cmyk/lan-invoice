@@ -97,8 +97,7 @@ def create_release(ver: str, token: str, changelog: str = "") -> dict:
 
 | 文件 | 说明 |
 |------|------|
-| 发票归档_v{ver}.exe | 便携版，下载双击直接运行 |
-| 发票归档_v{ver}_portable.zip | 便携版压缩包 |
+| 发票归档_v{ver}_portable.zip | 便携版，解压到任意目录即可运行 |
 | 发票归档_v{ver}_setup.exe | 安装版，含开始菜单和桌面快捷方式 |
 
 > 如遇到 SmartScreen 拦截，点击「更多信息」→「仍要运行」即可。
@@ -293,7 +292,6 @@ def main():
 • 更新弹窗新增「跳过此版本」按钮，不再反复提醒同一版本
 • 安装版本信息（右键→属性→详细信息显示发布者、版本号、版权）"""
     release = create_release(ver, token, changelog)
-    upload_asset(release["id"], exe_path, token)
     upload_asset(release["id"], zip_path, token)
     if setup_base:
         sp = os.path.join(DIST_DIR, f"{setup_base}.exe")
