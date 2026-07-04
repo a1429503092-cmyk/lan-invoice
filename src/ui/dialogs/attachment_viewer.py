@@ -8,7 +8,8 @@ import fitz
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
-    QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget
+    QAbstractItemView, QScrollArea, QFrame, QSplitter, QWidget,
+    QTextEdit
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QUrl
@@ -25,8 +26,9 @@ from ui.icons import get as get_icon
 
 IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
 PDF_EXTS = {'.pdf'}
+DOCX_EXTS = {'.docx', '.doc'}
 
-TYPE_ICONS = {'image': 'camera', 'pdf': 'document', 'doc': 'paperclip'}
+TYPE_ICONS = {'image': 'camera', 'pdf': 'document', 'docx': 'paperclip', 'doc': 'paperclip'}
 
 # 明确定义样式常量，避免主题变量颜色冲突
 LIST_BG = "#252525"
@@ -57,6 +59,8 @@ class AttachmentViewerDialog(QDialog):
             return 'image'
         elif ext in PDF_EXTS:
             return 'pdf'
+        elif ext in DOCX_EXTS:
+            return 'docx'
         else:
             return 'doc'
 
@@ -134,6 +138,15 @@ class AttachmentViewerDialog(QDialog):
         self.lbl_preview_img.hide()
         self.lbl_preview_img.setStyleSheet("background:transparent;")
         preview_layout.addWidget(self.lbl_preview_img)
+
+        self.text_preview = QTextEdit()
+        self.text_preview.setReadOnly(True)
+        self.text_preview.hide()
+        self.text_preview.setStyleSheet(
+            f"background:{PANEL_BG}; color:{PANEL_TEXT}; border:1px solid #444; "
+            "border-radius:4px; font-size:13px; padding:8px;"
+        )
+        preview_layout.addWidget(self.text_preview)
 
         self.btn_inline_open = QPushButton()
         self.btn_inline_open.setFixedHeight(40)
@@ -244,17 +257,20 @@ class AttachmentViewerDialog(QDialog):
         else:
             size_str = "—"
 
-        cat_label = {'image': '图片', 'pdf': 'PDF文档', 'doc': '文档'}.get(cat, '其他')
+        cat_label = {'image': '图片', 'pdf': 'PDF文档', 'docx': 'Word文档', 'doc': '文档'}.get(cat, '其他')
         self.lbl_file_info.setText(f"{cat_label}  |  {size_str}  |  {name}")
 
         self.lbl_preview_img.hide()
         self.btn_inline_open.hide()
         self.lbl_preview.hide()
+        self.text_preview.hide()
 
         if cat == 'image':
             self._show_image_preview(path, exists)
         elif cat == 'pdf':
             self._show_pdf_preview(path, exists)
+        elif cat == 'docx':
+            self._show_docx_preview(path, exists)
         else:
             self._show_doc_preview(path, exists)
 
@@ -309,6 +325,29 @@ class AttachmentViewerDialog(QDialog):
         else:
             self.lbl_preview.setText("文件不存在")
             self.lbl_preview.show()
+
+    def _show_docx_preview(self, path, exists):
+        if not exists:
+            self.lbl_preview.setText("文件不存在")
+            self.lbl_preview.show()
+            return
+        try:
+            import docx
+            doc = docx.Document(path)
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            if paragraphs:
+                text = "\n".join(paragraphs[:50])  # 最多显示 50 段
+                if len(paragraphs) > 50:
+                    text += f"\n\n... 共 {len(paragraphs)} 段，仅显示前 50 段"
+                self.text_preview.setPlainText(text)
+                self.text_preview.show()
+                return
+        except Exception:
+            pass
+        self.btn_inline_open.setText("📄 用系统程序打开")
+        self.btn_inline_open.show()
+        self.lbl_preview.setText("无法提取 Word 文本 — 点击按钮用系统程序打开")
+        self.lbl_preview.show()
 
     def _show_doc_preview(self, path, exists):
         if exists:

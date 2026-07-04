@@ -26,7 +26,7 @@ a = Analysis(
         'invoice_parser', 'models', 'repository',
         'filters', 'utils', 'worker',
         'logger', 'version', 'storage',
-        'pdfplumber', 'openpyxl', 'PIL',
+        'pdfplumber', 'openpyxl', 'PIL', 'docx',
     ],
     hookspath=[],
     hooksconfig={},
