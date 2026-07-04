@@ -120,6 +120,14 @@ class SettingsDialog(QDialog):
     def _check_update(self):
         self._app.check_update()
 
+    def _on_theme_changed(self):
+        theme = self.cmb_theme.currentData()
+        if theme:
+            self._app._config.theme = theme
+            self._app._config.save()
+            from qt_material import apply_stylesheet
+            apply_stylesheet(QApplication.instance(), theme=theme)
+
     # ── 页签构建 ─────────────────────────────
 
     def _build_general_tab(self):
@@ -157,6 +165,22 @@ class SettingsDialog(QDialog):
         btn_apply.setFixedHeight(32)
         btn_apply.clicked.connect(self._apply_data_dir)
         lay.addWidget(btn_apply)
+
+        # 主题选择
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(8)
+        theme_row.addWidget(QLabel("主题"))
+        self.cmb_theme = QComboBox()
+        from qt_material import list_themes
+        for t in sorted(list_themes()):
+            self.cmb_theme.addItem(t.replace(".xml", "").replace("_", " ").title(), t)
+        current = self._app._config.theme
+        idx = self.cmb_theme.findData(current)
+        if idx >= 0:
+            self.cmb_theme.setCurrentIndex(idx)
+        self.cmb_theme.currentIndexChanged.connect(self._on_theme_changed)
+        theme_row.addWidget(self.cmb_theme, 1)
+        lay.addLayout(theme_row)
 
         lay.addWidget(self._hline())
         lay.addWidget(self._section_title("标签模板"))
