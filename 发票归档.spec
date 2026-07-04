@@ -27,6 +27,7 @@ a = Analysis(
         'filters', 'utils', 'worker',
         'logger', 'version', 'storage',
         'pdfplumber', 'openpyxl', 'PIL', 'docx', 'mammoth',
+        'matplotlib', 'matplotlib.backends.backend_qt5agg',
     ],
     hookspath=[],
     hooksconfig={},

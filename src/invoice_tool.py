@@ -9,7 +9,7 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -91,6 +91,11 @@ class InvoiceApp(QMainWindow):
         self._filter_seller      = None   # 销售方名称筛选
         self._filter_company     = ""     # 企业号搜索（模糊匹配）
         self._filter_buyer       = ""     # 购买方名称/税号搜索（模糊匹配）
+        self._filter_amount_min  = None   # 金额范围下限
+        self._filter_amount_max  = None   # 金额范围上限
+        self._filter_date_from   = None   # 日期范围起（datetime）
+        self._filter_date_to     = None   # 日期范围止（datetime）
+        self._quick_date_val     = None   # 快速筛选值
         self._show_advanced_filter = False
         self._shown_records = []   # 当前筛选后的记录缓存，_rebuild_table 时更新
         self._sort_column = None
@@ -233,6 +238,12 @@ class InvoiceApp(QMainWindow):
         self.btn_preview.setToolTip("导入前预览解析结果，排除重复发票")
         self.btn_preview.clicked.connect(self._preview_import_files)
 
+        self.btn_stats = QPushButton(" 统计")
+        self.btn_stats.setIcon(get_icon('search'))
+        self.btn_stats.setFixedHeight(36)
+        self.btn_stats.setToolTip("数据统计分析（月度趋势、类型分布、年度对比）")
+        self.btn_stats.clicked.connect(self._open_stats)
+
         self.btn_settings = QPushButton(" 设置")
         self.btn_settings.setIcon(get_icon('settings'))
         self.btn_settings.setFixedHeight(36)
@@ -246,6 +257,7 @@ class InvoiceApp(QMainWindow):
 
         top_bar.addWidget(self.btn_open)
         top_bar.addWidget(self.btn_preview)
+        top_bar.addWidget(self.btn_stats)
         top_bar.addWidget(self.btn_settings)
         top_bar.addStretch()
         top_bar.addSpacing(12)
@@ -293,44 +305,80 @@ class InvoiceApp(QMainWindow):
         # ── 高级筛选面板（默认隐藏）───────────────
         self._advanced_filter_frame = QFrame()
         self._advanced_filter_frame.setVisible(False)
-        adv_layout = QHBoxLayout(self._advanced_filter_frame)
-        adv_layout.setContentsMargins(0, 0, 0, 0)
-        adv_layout.setSpacing(8)
+        adv_outer = QVBoxLayout(self._advanced_filter_frame)
+        adv_outer.setContentsMargins(0, 4, 0, 0)
+        adv_outer.setSpacing(6)
 
-        adv_layout.addWidget(QLabel("发票类型"))
+        # 第一行：原有筛选
+        adv_row1 = QHBoxLayout()
+        adv_row1.setSpacing(8)
+        adv_row1.addWidget(QLabel("发票类型"))
         self.combo_inv_type = QComboBox()
         self.combo_inv_type.setMinimumWidth(100)
         self.combo_inv_type.addItem("全部", None)
+        adv_row1.addWidget(self.combo_inv_type)
 
-        adv_layout.addWidget(QLabel("销售方"))
+        adv_row1.addWidget(QLabel("销售方"))
         self.combo_seller = QComboBox()
         self.combo_seller.setMinimumWidth(120)
         self.combo_seller.addItem("全部", None)
+        adv_row1.addWidget(self.combo_seller)
 
         self.combo_inv_type.currentIndexChanged.connect(self._apply_filter)
         self.combo_seller.currentIndexChanged.connect(self._apply_filter)
 
-        adv_layout.addWidget(QLabel("购买方"))
+        adv_row1.addWidget(QLabel("购买方"))
         self.edit_buyer_search = QLineEdit()
         self.edit_buyer_search.setPlaceholderText("名称或税号")
         self.edit_buyer_search.setMinimumWidth(100)
         self.edit_buyer_search.textChanged.connect(lambda: self._filter_timer.start(300))
+        adv_row1.addWidget(self.edit_buyer_search)
 
-        adv_layout.addWidget(QLabel("标签"))
+        adv_row1.addWidget(QLabel("标签"))
         self.edit_company_search = QLineEdit()
         self.edit_company_search.setPlaceholderText("输入标签搜索")
         self.edit_company_search.setMinimumWidth(100)
         self.edit_company_search.textChanged.connect(lambda: self._filter_timer.start(300))
+        adv_row1.addWidget(self.edit_company_search)
+        adv_row1.addStretch()
+        adv_outer.addLayout(adv_row1)
 
-        adv_layout.addWidget(QLabel("发票类型"))
-        adv_layout.addWidget(self.combo_inv_type, 1)
-        adv_layout.addWidget(QLabel("销售方"))
-        adv_layout.addWidget(self.combo_seller, 1)
-        adv_layout.addWidget(QLabel("购买方"))
-        adv_layout.addWidget(self.edit_buyer_search, 2)
-        adv_layout.addWidget(QLabel("标签"))
-        adv_layout.addWidget(self.edit_company_search, 2)
-        adv_layout.addStretch()
+        # 第二行：金额范围 + 日期快速筛选
+        adv_row2 = QHBoxLayout()
+        adv_row2.setSpacing(8)
+        adv_row2.addWidget(QLabel("金额范围"))
+        self.edit_amount_min = QLineEdit()
+        self.edit_amount_min.setPlaceholderText("最低")
+        self.edit_amount_min.setFixedWidth(70)
+        self.edit_amount_min.textChanged.connect(lambda: self._filter_timer.start(300))
+        adv_row2.addWidget(self.edit_amount_min)
+        adv_row2.addWidget(QLabel("—"))
+        self.edit_amount_max = QLineEdit()
+        self.edit_amount_max.setPlaceholderText("最高")
+        self.edit_amount_max.setFixedWidth(70)
+        self.edit_amount_max.textChanged.connect(lambda: self._filter_timer.start(300))
+        adv_row2.addWidget(self.edit_amount_max)
+
+        adv_row2.addWidget(QLabel("  日期"))
+        quick_dates = [("最近 30 天", 30), ("最近 90 天", 90),
+                       ("本月", "month"), ("本季", "quarter")]
+        self._quick_date_btns = []
+        for label, val in quick_dates:
+            btn = QPushButton(label)
+            btn.setFixedHeight(26)
+            btn.setCheckable(True)
+            btn.setStyleSheet(
+                "QPushButton { padding:2px 8px; font-size:11px; "
+                "border:1px solid #555; border-radius:3px; color:#aaa; }"
+                "QPushButton:checked { background:#3A8FD4; color:white; border-color:#3A8FD4; }"
+            )
+            btn._quick_val = val
+            btn.clicked.connect(lambda _, v=val: self._on_quick_date(v))
+            self._quick_date_btns.append(btn)
+            adv_row2.addWidget(btn)
+
+        adv_row2.addStretch()
+        adv_outer.addLayout(adv_row2)
         main_layout.addWidget(self._advanced_filter_frame)
 
         # ── 进度条 ───────────────────────────────
@@ -543,6 +591,37 @@ class InvoiceApp(QMainWindow):
     def _get_available_sellers(self):
         return get_available_sellers(self.records)
 
+    @staticmethod
+    def _parse_float_or_none(s: str) -> float | None:
+        try:
+            return float(s)
+        except ValueError:
+            return None
+
+    def _on_quick_date(self, val):
+        """快速日期筛选：取消其他按钮选中，切换自身"""
+        if self._quick_date_val == val:
+            self._quick_date_val = None
+            self._filter_date_from = None
+            self._filter_date_to = None
+        else:
+            self._quick_date_val = val
+            today = datetime.now()
+            if isinstance(val, int):
+                self._filter_date_from = today - timedelta(days=val)
+                self._filter_date_to = today
+            elif val == "month":
+                self._filter_date_from = today.replace(day=1)
+                self._filter_date_to = today
+            elif val == "quarter":
+                q_month = ((today.month - 1) // 3) * 3 + 1
+                self._filter_date_from = today.replace(month=q_month, day=1)
+                self._filter_date_to = today
+        # 更新按钮选中状态：只高亮当前激活的
+        for b in self._quick_date_btns:
+            b.setChecked(b._quick_val == self._quick_date_val)
+        self._apply_filter()
+
     def _refresh_year_combo(self):
         current = self.combo_year.currentData()
         self.combo_year.blockSignals(True)
@@ -588,6 +667,10 @@ class InvoiceApp(QMainWindow):
         self._filter_seller   = self.combo_seller.currentData()
         self._filter_buyer    = self.edit_buyer_search.text().strip()
         self._filter_company  = self.edit_company_search.text().strip()
+        self._filter_amount_min = self._parse_float_or_none(
+            self.edit_amount_min.text().strip())
+        self._filter_amount_max = self._parse_float_or_none(
+            self.edit_amount_max.text().strip())
         self._rebuild_table()
         parts = []
         if self._filter_year:
@@ -619,20 +702,57 @@ class InvoiceApp(QMainWindow):
         self._filter_seller   = None
         self._filter_buyer    = ""
         self._filter_company  = ""
+        self._filter_amount_min = None
+        self._filter_amount_max = None
+        self._filter_date_from = None
+        self._filter_date_to = None
+        self._quick_date_val = None
         self.combo_year.setCurrentIndex(0)
         self.combo_month.setCurrentIndex(0)
         self.combo_inv_type.setCurrentIndex(0)
         self.combo_seller.setCurrentIndex(0)
         self.edit_buyer_search.clear()
         self.edit_company_search.clear()
+        self.edit_amount_min.clear()
+        self.edit_amount_max.clear()
+        for b in self._quick_date_btns:
+            b.setChecked(False)
         self.lbl_filter_hint.setText("")
         self._rebuild_table()
 
     def _record_matches_filter(self, rec) -> bool:
-        return record_matches_filter(
+        if not record_matches_filter(
             rec, self._filter_year, self._filter_month,
             self._filter_inv_type, self._filter_seller,
-            self._filter_buyer, self._filter_company)
+            self._filter_buyer, self._filter_company):
+            return False
+        # 金额范围
+        amt = safe_float(rec.get("amount") if isinstance(rec, dict) else getattr(rec, "amount", 0))
+        if self._filter_amount_min is not None and amt < self._filter_amount_min:
+            return False
+        if self._filter_amount_max is not None and amt > self._filter_amount_max:
+            return False
+        # 日期范围
+        if self._filter_date_from or self._filter_date_to:
+            d = rec.get("invoice_date") if isinstance(rec, dict) else getattr(rec, "invoice_date", "")
+            dt = self._parse_invoice_date(d)
+            if dt:
+                if self._filter_date_from and dt < self._filter_date_from:
+                    return False
+                if self._filter_date_to and dt > self._filter_date_to:
+                    return False
+        return True
+
+    @staticmethod
+    def _parse_invoice_date(d: str) -> datetime | None:
+        """解析发票日期 '2025年06月15日' → datetime"""
+        m = re.match(r'(\d{4})年(\d{2})月(\d{2})日', str(d or ""))
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                pass
+        return None
 
     def _on_header_clicked(self, logical_index):
         """列头点击排序：升序→降序→取消"""
@@ -991,6 +1111,22 @@ class InvoiceApp(QMainWindow):
     def _open_settings(self):
         """打开设置对话框"""
         dlg = SettingsDialog(self, parent=self)
+        dlg.exec_()
+
+    def _open_stats(self):
+        """打开统计分析面板"""
+        from ui.widgets.stats_panel import StatsPanel
+        # 转换为 dict 列表（兼容旧数据）
+        records = []
+        for r in self._shown_records if self._shown_records else self.records:
+            if hasattr(r, '__dict__'):
+                d = r.__dict__ if isinstance(r.__dict__, dict) else vars(r)
+            elif isinstance(r, dict):
+                d = r
+            else:
+                d = vars(r)
+            records.append(d)
+        dlg = StatsPanel(records, parent=self)
         dlg.exec_()
 
     def _check_desktop_shortcut(self):
