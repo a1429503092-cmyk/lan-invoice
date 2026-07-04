@@ -152,14 +152,6 @@ class ConfigManager:
         self._data["skipped_version"] = v
 
     @property
-    def theme(self) -> str:
-        return self._data.get("theme", "dark_teal.xml")
-
-    @theme.setter
-    def theme(self, v: str):
-        self._data["theme"] = v
-
-    @property
     def data_dir(self) -> str:
         return self._data.get("data_dir", "")
 

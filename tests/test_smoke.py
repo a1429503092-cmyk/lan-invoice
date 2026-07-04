@@ -93,7 +93,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(s["max_keep"], 30)
 
     def test_mcp_entry_generation(self):
-        """MCP 配置项生成：开发/打包模式"""
+        """MCP JSON 配置项生成：dev 有 cwd，frozen 无 cwd"""
         import sys
         from ui.dialogs.settings import SettingsDialog
         entry = SettingsDialog._make_mcp_entry()
@@ -103,25 +103,17 @@ class TestConfig(unittest.TestCase):
         if not getattr(sys, 'frozen', False):
             self.assertIn("cwd", entry)
 
-    def test_mcp_config_write(self):
-        """MCP 配置写入不崩溃（空文件 → 写入 → 验证）"""
+    def test_mcp_entry_json_format(self):
+        """MCP JSON 配置格式正确（mcpServers.invoice 存在）"""
         import json
-        mcp_file = os.path.join(self._tmp, "test_mcp.json")
-        entry = {"command": "test-exe.exe", "args": ["--mcp"]}
-        os.makedirs(os.path.dirname(mcp_file), exist_ok=True)
-        cfg = {}
-        try:
-            with open(mcp_file, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
-        cfg.setdefault("mcpServers", {})["invoice"] = entry
-        with open(mcp_file, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        with open(mcp_file, encoding="utf-8") as f:
-            loaded = json.load(f)
+        from ui.dialogs.settings import SettingsDialog
+        entry = SettingsDialog._make_mcp_entry()
+        cfg = {"mcpServers": {"invoice": entry}}
+        text = json.dumps(cfg, ensure_ascii=False, indent=2)
+        loaded = json.loads(text)
         self.assertIn("invoice", loaded["mcpServers"])
-        self.assertEqual(loaded["mcpServers"]["invoice"]["args"], ["--mcp"])
+        self.assertIn("--mcp", loaded["mcpServers"]["invoice"]["args"])
+        self.assertEqual(loaded["mcpServers"]["invoice"]["command"], "uv")
 
 
 class TestDatabase(unittest.TestCase):
@@ -404,9 +396,10 @@ class TestUiInstantiation(unittest.TestCase):
         self.assertIsNotNone(getattr(dlg, "_local_card", None))
         self.assertIsNotNone(getattr(dlg, "_webdav_card", None))
 
-        # 验证 MCP 命令行存在
-        self.assertTrue(hasattr(dlg, "edit_mcp_cmd"))
-        self.assertIn("--mcp", dlg.edit_mcp_cmd.text())
+        # 验证 MCP JSON 配置存在
+        self.assertTrue(hasattr(dlg, "edit_mcp_json"))
+        self.assertIn("--mcp", dlg.edit_mcp_json.text())
+        self.assertIn("mcpServers", dlg.edit_mcp_json.text())
 
         dlg.close()
 

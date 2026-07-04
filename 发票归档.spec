@@ -27,7 +27,6 @@ a = Analysis(
         'filters', 'utils', 'worker',
         'logger', 'version', 'storage',
         'pdfplumber', 'openpyxl', 'PIL', 'docx', 'mammoth',
-        'qt_material',
     ],
     hookspath=[],
     hooksconfig={},

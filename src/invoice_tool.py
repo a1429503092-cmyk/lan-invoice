@@ -1853,13 +1853,7 @@ def main():
     # 先创建 QApplication（日志 setup 内的 Qt 钩子需要它）
     app = QApplication(sys.argv)
     app.setApplicationName("发票归档")
-
-    # qt-material 主题
-    from qt_material import apply_stylesheet
-    appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-    theme = ConfigManager(os.path.join(appdata, "lan-invoice", "config.json")).theme
-    apply_stylesheet(app, theme=theme or "dark_teal.xml")
-
+    app.setStyle("Fusion")
     app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 

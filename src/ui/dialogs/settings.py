@@ -3,6 +3,7 @@
 
 import os
 import sys
+import json
 import shutil
 import zipfile
 from datetime import datetime
@@ -10,7 +11,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QFrame, QListWidget, QCheckBox, QComboBox,
-    QSpinBox, QTabWidget, QWidget, QApplication
+    QSpinBox, QTabWidget, QWidget
 )
 from PyQt5.QtCore import Qt
 from logger import getLogger
@@ -120,16 +121,6 @@ class SettingsDialog(QDialog):
     def _check_update(self):
         self._app.check_update()
 
-    def _on_theme_changed(self):
-        theme = self.cmb_theme.currentData()
-        if theme:
-            self._app._config.theme = theme
-            self._app._config.save()
-            from qt_material import apply_stylesheet
-            apply_stylesheet(QApplication.instance(), theme=theme,
-                              invert_secondary='dark' in theme,
-                              extra={'density_scale': -1})
-
     # ── 页签构建 ─────────────────────────────
 
     def _build_general_tab(self):
@@ -167,22 +158,6 @@ class SettingsDialog(QDialog):
         btn_apply.setFixedHeight(32)
         btn_apply.clicked.connect(self._apply_data_dir)
         lay.addWidget(btn_apply)
-
-        # 主题选择
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(8)
-        theme_row.addWidget(QLabel("主题"))
-        self.cmb_theme = QComboBox()
-        from qt_material import list_themes
-        for t in sorted(list_themes()):
-            self.cmb_theme.addItem(t.replace(".xml", "").replace("_", " ").title(), t)
-        current = self._app._config.theme
-        idx = self.cmb_theme.findData(current)
-        if idx >= 0:
-            self.cmb_theme.setCurrentIndex(idx)
-        self.cmb_theme.currentIndexChanged.connect(self._on_theme_changed)
-        theme_row.addWidget(self.cmb_theme, 1)
-        lay.addLayout(theme_row)
 
         lay.addWidget(self._hline())
         lay.addWidget(self._section_title("标签模板"))
@@ -309,50 +284,57 @@ class SettingsDialog(QDialog):
 
         lay.addWidget(self._section_title("MCP 服务"))
         mcp_hint = QLabel(
-            "MCP（Model Context Protocol）允许 AI 客户端直接操作发票数据库。\n"
-            "支持 Claude Code、CodeBuddy（腾讯）、WorkBuddy（阿里）。\n"
-            "通过 stdio 协议通信，不绑端口、无冲突。"
+            "MCP（Model Context Protocol）是 AI 客户端的通用协议。\n"
+            "Claude Code、CodeBuddy、WorkBuddy、Cursor 等均支持。\n"
+            "复制下方 JSON 配置，让 AI 助手自行完成接入即可。"
         )
         mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         mcp_hint.setWordWrap(True)
         lay.addWidget(mcp_hint)
 
-        if getattr(sys, 'frozen', False):
-            self._mcp_cmd_text = f'"{sys.executable}" --mcp'
-        else:
-            self._mcp_cmd_text = "uv run python src/invoice_tool.py --mcp"
-        mcp_cmd_row = QHBoxLayout()
-        mcp_cmd_row.setSpacing(8)
-        self.edit_mcp_cmd = QLineEdit()
-        self.edit_mcp_cmd.setReadOnly(True)
-        self.edit_mcp_cmd.setFixedHeight(32)
-        self.edit_mcp_cmd.setStyleSheet(
+        # JSON 配置（标准 MCP 格式，所有工具通用）
+        entry = self._make_mcp_entry()
+        self._mcp_json_text = json.dumps(
+            {"mcpServers": {"invoice": entry}},
+            ensure_ascii=False, indent=2,
+        )
+        self.edit_mcp_json = QLineEdit()
+        self.edit_mcp_json.setReadOnly(True)
+        self.edit_mcp_json.setFixedHeight(32)
+        self.edit_mcp_json.setStyleSheet(
             f"background:{BG_ALT}; border:none; "
             "font-family:Consolas,monospace; padding:2px 6px; font-size:11px;")
-        self.edit_mcp_cmd.setText(self._mcp_cmd_text)
-        mcp_cmd_row.addWidget(self.edit_mcp_cmd, 1)
-        lay.addLayout(mcp_cmd_row)
+        self.edit_mcp_json.setText(self._mcp_json_text)
+        mcp_row = QHBoxLayout()
+        mcp_row.setSpacing(8)
+        mcp_row.addWidget(self.edit_mcp_json, 1)
+        lay.addLayout(mcp_row)
 
         mcp_btn_row = QHBoxLayout()
         mcp_btn_row.setSpacing(8)
-        btn_copy = QPushButton("复制命令")
+        btn_copy = QPushButton("复制 JSON 配置")
         btn_copy.setFixedHeight(32)
-        btn_copy.clicked.connect(self._copy_mcp_cmd)
-        btn_claude = QPushButton("配置 Claude")
-        btn_claude.setFixedHeight(32)
-        btn_claude.clicked.connect(self._install_mcp_claude)
-        btn_codebuddy = QPushButton("配置 CodeBuddy")
-        btn_codebuddy.setFixedHeight(32)
-        btn_codebuddy.clicked.connect(self._install_mcp_codebuddy)
-        btn_wb = QPushButton("配置 WorkBuddy")
-        btn_wb.setFixedHeight(32)
-        btn_wb.clicked.connect(self._install_mcp_workbuddy)
+        btn_copy.clicked.connect(self._copy_mcp_json)
         mcp_btn_row.addWidget(btn_copy)
-        mcp_btn_row.addWidget(btn_claude)
-        mcp_btn_row.addWidget(btn_codebuddy)
-        mcp_btn_row.addWidget(btn_wb)
         mcp_btn_row.addStretch()
         lay.addLayout(mcp_btn_row)
+
+        # Prompt 提示
+        prompt_hint = QLabel(
+            "在 AI 工具中发送以下 Prompt：\n\n"
+            "请帮我配置一个名为 invoice 的 MCP 服务器，使用以下 JSON：\n"
+            f"{self._mcp_json_text}\n\n"
+            "找到你使用的这款工具的 MCP 配置文件并写入，然后重启工具。"
+        )
+        prompt_hint.setStyleSheet(
+            f"font-size:10px; color:{TEXT_DIM}; background:{BG_ALT}; "
+            "padding:8px; border-radius:4px;")
+        prompt_hint.setWordWrap(True)
+        lay.addWidget(prompt_hint)
+        btn_copy_prompt = QPushButton("复制 Prompt")
+        btn_copy_prompt.setFixedHeight(28)
+        btn_copy_prompt.clicked.connect(self._copy_mcp_prompt)
+        lay.addWidget(btn_copy_prompt, alignment=Qt.AlignRight)
 
         lay.addStretch()
         return w
@@ -647,29 +629,24 @@ class SettingsDialog(QDialog):
 
     # ── MCP 配置 ──────────────────────────────
 
-    def _copy_mcp_cmd(self):
+    def _copy_mcp_json(self):
         from PyQt5.QtWidgets import QApplication
-        QApplication.clipboard().setText(self.edit_mcp_cmd.text())
+        QApplication.clipboard().setText(self._mcp_json_text)
         QMessageBox.information(self, "已复制",
-                                "MCP 命令已复制到剪贴板。\n\n在 AI 客户端中粘贴此命令即可。")
+                                "MCP JSON 配置已复制到剪贴板。\n\n"
+                                "粘贴到 AI 工具中，让它帮你完成配置。")
 
-    def _install_mcp_claude(self):
-        cfg_dir = os.path.join(
-            os.environ.get("APPDATA", os.path.expanduser("~")), "Claude")
-        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "settings.json"),
-                               self._make_mcp_entry(), "Claude Code")
-
-    def _install_mcp_codebuddy(self):
-        cfg_dir = os.path.join(os.path.expanduser("~"), ".codebuddy")
-        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "mcp.json"),
-                               self._make_mcp_entry(), "CodeBuddy")
-
-    def _install_mcp_workbuddy(self):
-        cfg_dir = os.path.join(os.path.expanduser("~"), ".workbuddy")
-        entry = self._make_mcp_entry()
-        entry["type"] = "stdio"
-        self._write_mcp_config(cfg_dir, os.path.join(cfg_dir, "mcp.json"),
-                               entry, "WorkBuddy")
+    def _copy_mcp_prompt(self):
+        from PyQt5.QtWidgets import QApplication
+        prompt = (
+            "请帮我配置一个名为 invoice 的 MCP 服务器，使用以下 JSON：\n"
+            f"{self._mcp_json_text}\n\n"
+            "找到你使用的这款工具的 MCP 配置文件并写入，然后重启工具。"
+        )
+        QApplication.clipboard().setText(prompt)
+        QMessageBox.information(self, "已复制",
+                                "Prompt 已复制到剪贴板。\n\n"
+                                "粘贴到 AI 工具对话框，让它帮你完成配置。")
 
     @staticmethod
     def _make_mcp_entry() -> dict:
@@ -682,30 +659,6 @@ class SettingsDialog(QDialog):
             "args": ["run", "python", "src/invoice_tool.py", "--mcp"],
             "cwd": proj,
         }
-
-    def _write_mcp_config(self, cfg_dir: str, cfg_file: str, entry: dict, name: str):
-        import json
-        os.makedirs(cfg_dir, exist_ok=True)
-        cfg = {}
-        if os.path.exists(cfg_file):
-            try:
-                with open(cfg_file, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                pass
-        servers = cfg.setdefault("mcpServers", {})
-        servers["invoice"] = entry
-        try:
-            with open(cfg_file, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
-            QMessageBox.information(
-                self, "配置完成",
-                f"已写入 {name} 配置：\n{cfg_file}\n\n"
-                f"重启 {name} 后即可使用 MCP 工具。"
-            )
-        except OSError as e:
-            QMessageBox.warning(self, "配置失败",
-                                f"写入配置文件失败：\n{e}")
 
     # ── 手动 ZIP 备份恢复 ────────────────────────
 
