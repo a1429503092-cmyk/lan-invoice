@@ -10,7 +10,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QFrame, QListWidget, QCheckBox, QComboBox,
-    QSpinBox, QTabWidget, QWidget
+    QSpinBox, QTabWidget, QWidget, QApplication
 )
 from PyQt5.QtCore import Qt
 from logger import getLogger
@@ -126,7 +126,9 @@ class SettingsDialog(QDialog):
             self._app._config.theme = theme
             self._app._config.save()
             from qt_material import apply_stylesheet
-            apply_stylesheet(QApplication.instance(), theme=theme)
+            apply_stylesheet(QApplication.instance(), theme=theme,
+                              invert_secondary='dark' in theme,
+                              extra={'density_scale': -1})
 
     # ── 页签构建 ─────────────────────────────
 
