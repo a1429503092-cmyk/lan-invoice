@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QHeaderView, QStatusBar, QFrame,
     QProgressBar, QAbstractItemView, QDialog,
-    QComboBox, QMenu, QSizePolicy
+    QComboBox, QMenu, QSizePolicy, QSplitter
 )
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QTimer, QUrl, QEvent
@@ -469,7 +469,46 @@ class InvoiceApp(QMainWindow):
         )
         self._freeze_table.hide()
         table_area_layout.addWidget(self._freeze_table, 0)
-        main_layout.addWidget(table_area)
+
+        # ── 预览面板（右侧）─────────────────────
+        self._preview_panel = QFrame()
+        self._preview_panel.setFixedWidth(280)
+        self._preview_panel.setVisible(False)
+        self._preview_panel.setStyleSheet(
+            f"background:{SUMMARY_FRAME_QSS.split('background:')[1].split(';')[0] if 'background:' in SUMMARY_FRAME_QSS else '#f8f9fa'}; "
+            "border-left:1px solid #ddd; border-radius:0;")
+        preview_lay = QVBoxLayout(self._preview_panel)
+        preview_lay.setContentsMargins(8, 8, 8, 8)
+        preview_lay.setSpacing(6)
+
+        # 详情标签
+        self._pv_lbl = QLabel("选中发票可预览")
+        self._pv_lbl.setWordWrap(True)
+        self._pv_lbl.setStyleSheet(f"font-size:12px; color:{TEXT};")
+        preview_lay.addWidget(self._pv_lbl)
+
+        self._pv_img = QLabel()
+        self._pv_img.setAlignment(Qt.AlignCenter)
+        self._pv_img.setMinimumHeight(200)
+        self._pv_img.setStyleSheet("background:#f0f0f0; border-radius:4px;")
+        preview_lay.addWidget(self._pv_img, 1)
+
+        btn_open_pdf = QPushButton("打开完整 PDF")
+        btn_open_pdf.setFixedHeight(28)
+        btn_open_pdf.clicked.connect(self._open_selected_pdf)
+        preview_lay.addWidget(btn_open_pdf)
+
+        # Splitter: 表格（左） | 预览（右）
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(table_area)
+        splitter.addWidget(self._preview_panel)
+        splitter.setSizes([700, 0])  # 初始预览隐藏
+        main_layout.addWidget(splitter)
+
+        # 行选中 → 更新预览
+        self.table.selectionModel().selectionChanged.connect(
+            self._on_row_selected)
 
         # 同步垂直滚动
         self.table.verticalScrollBar().valueChanged.connect(
@@ -659,6 +698,70 @@ class InvoiceApp(QMainWindow):
         self.combo_seller.blockSignals(False)
 
         self._refresh_year_combo()
+
+    def _on_row_selected(self):
+        """表格行选中 → 右侧预览面板显示 PDF 首页 + 详情"""
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            self._preview_panel.setVisible(False)
+            return
+        row = rows[0].row()
+        rec = self._get_record_by_row(row)
+        if not rec:
+            self._preview_panel.setVisible(False)
+            return
+        # 获取 pdf_path
+        pdf = rec.get("pdf_path", "") if isinstance(rec, dict) else getattr(rec, "pdf_path", "")
+        if not pdf or not os.path.exists(pdf):
+            self._preview_panel.setVisible(False)
+            return
+
+        # 详情文本
+        amt = rec.get("amount") if isinstance(rec, dict) else getattr(rec, "amount", "")
+        d = rec.get("invoice_date") if isinstance(rec, dict) else getattr(rec, "invoice_date", "")
+        typ = rec.get("invoice_type") if isinstance(rec, dict) else getattr(rec, "invoice_type", "")
+        buyer = rec.get("buyer_name") if isinstance(rec, dict) else getattr(rec, "buyer_name", "")
+        sell = rec.get("seller_name") if isinstance(rec, dict) else getattr(rec, "seller_name", "")
+        self._pv_lbl.setText(
+            f"<b>金额：¥{amt}</b><br>"
+            f"日期：{d}<br>"
+            f"类型：{typ}<br>"
+            f"购买方：{buyer}<br>"
+            f"销售方：{sell}"
+        )
+
+        # 渲染 PDF 首页缩略图
+        try:
+            import fitz
+            doc = fitz.open(pdf)
+            if doc.page_count > 0:
+                page = doc[0]
+                mat = fitz.Matrix(0.4, 0.4)  # 40% 缩放
+                pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB)
+                img_data = pix.samples
+                from PyQt5.QtGui import QImage, QPixmap
+                qimg = QImage(img_data, pix.width, pix.height,
+                              pix.stride, QImage.Format_RGB888)
+                qpix = QPixmap.fromImage(qimg)
+                self._pv_img.setPixmap(qpix.scaled(
+                    260, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            doc.close()
+        except Exception:
+            self._pv_img.setText("无法预览")
+        self._preview_panel.setVisible(True)
+
+    def _open_selected_pdf(self):
+        """打开当前选中行的 PDF 文件"""
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            return
+        rec = self._get_record_by_row(rows[0].row())
+        if not rec:
+            return
+        pdf = rec.get("pdf_path", "") if isinstance(rec, dict) else getattr(rec, "pdf_path", "")
+        if pdf and os.path.exists(pdf):
+            from ui.dialogs.pdf_viewer import PdfViewerDialog
+            PdfViewerDialog(pdf, parent=self).exec_()
 
     def _apply_filter(self):
         self._filter_year     = self.combo_year.currentData()
