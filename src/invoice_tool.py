@@ -391,9 +391,11 @@ class InvoiceApp(QMainWindow):
 
         # ── 统计汇总栏 ───────────────────────────
         self.summary_frame = QFrame()
-        self.summary_frame.setFrameShape(QFrame.StyledPanel)
+        self.summary_frame.setFixedHeight(42)
+        self.summary_frame.setStyleSheet(
+            f"background:{WHITE}; border:1px solid {BORDER_LIGHT}; border-radius:4px;")
         sum_layout = QHBoxLayout(self.summary_frame)
-        sum_layout.setContentsMargins(0, 0, 0, 0)
+        sum_layout.setContentsMargins(4, 0, 4, 0)
         sum_layout.setSpacing(0)
 
         self.lbl_count     = self._stat_label("发票总数", "0 张")
@@ -577,8 +579,8 @@ class InvoiceApp(QMainWindow):
     def _stat_label(self, title, value):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(8, 4, 8, 4)
-        v.setSpacing(1)
+        v.setContentsMargins(8, 2, 8, 2)
+        v.setSpacing(0)
         lbl_t = QLabel(title)
         lbl_t.setStyleSheet(f"font-size:10px; color:{TEXT_SEC};")
         lbl_v = QLabel(value)
