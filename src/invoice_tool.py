@@ -735,6 +735,7 @@ class InvoiceApp(QMainWindow):
         )
 
         # 渲染 PDF 首页缩略图
+        doc = None
         try:
             import fitz
             doc = fitz.open(pdf)
@@ -749,9 +750,11 @@ class InvoiceApp(QMainWindow):
                 qpix = QPixmap.fromImage(qimg)
                 self._pv_img.setPixmap(qpix.scaled(
                     260, 350, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            doc.close()
         except Exception:
             self._pv_img.setText("无法预览")
+        finally:
+            if doc is not None:
+                doc.close()
         self._preview_panel.setVisible(True)
 
     def _open_selected_pdf(self):
@@ -966,7 +969,10 @@ class InvoiceApp(QMainWindow):
         self._refresh_summary_from_list(shown)
         self._save_locked = False
         active = any([self._filter_year, self._filter_month,
-                      self._filter_inv_type, self._filter_seller])
+                      self._filter_inv_type, self._filter_seller,
+                      self._filter_buyer, self._filter_company,
+                      self._filter_amount_min, self._filter_amount_max,
+                      self._filter_date_from, self._filter_date_to])
         if active:
             self.status.showMessage(f"筛选结果：显示 {len(shown)} 张 / 共 {len(self.records)} 张")
         elif len(self.records) == 0:
