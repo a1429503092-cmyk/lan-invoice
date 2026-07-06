@@ -146,6 +146,11 @@ class StatsPanel(QDialog):
             types[t] += safe_float(r.get("amount"))
         labels = list(types.keys())
         sizes = list(types.values())
+        if sum(sizes) <= 0:
+            ax.text(0.5, 0.5, "暂无金额数据", ha='center', va='center',
+                    fontsize=12, color='gray', transform=ax.transAxes)
+            ax.axis('off')
+            return
         colors = ['#3A8FD4', '#E74C3C', '#27AE60', '#F39C12',
                   '#8E44AD', '#1ABC9C', '#E67E22', '#2C3E50']
         wedges, texts, autotexts = ax.pie(

@@ -577,10 +577,12 @@ class InvoiceApp(QMainWindow):
     def _stat_label(self, title, value):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(12, 8, 12, 8)
-        v.setSpacing(2)
+        v.setContentsMargins(8, 4, 8, 4)
+        v.setSpacing(1)
         lbl_t = QLabel(title)
+        lbl_t.setStyleSheet(f"font-size:10px; color:{TEXT_SEC};")
         lbl_v = QLabel(value)
+        lbl_v.setStyleSheet(f"font-size:13px; font-weight:bold; color:{TEXT};")
         v.addWidget(lbl_t)
         v.addWidget(lbl_v)
         w._value_label = lbl_v
