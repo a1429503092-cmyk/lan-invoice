@@ -1,0 +1,15 @@
+# Inno Setup 6 + Wine — 用于 Docker 内交叉编译 Windows 安装包
+# 构建: docker build -t lan-invoice-iss -f scripts/Dockerfile.innosetup .
+# 用法: 见 scripts/create_installer.py
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget xvfb wine && \
+    wget -q https://files.jrsoftware.org/is/6/innosetup-6.4.1.exe && \
+    xvfb-run wine innosetup-6.4.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART && \
+    rm innosetup-6.4.1.exe && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+ENTRYPOINT ["wine", "/inno-setup/ISCC.exe"]

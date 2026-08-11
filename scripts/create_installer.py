@@ -3,9 +3,10 @@
 发票归档 Windows 安装包创建脚本（版本号自动从源码读取）
 
 创建方式（按优先级）：
-1. NSIS — Nullsoft 安装包（推荐）
-2. IExpress — Windows 内置工具（备选）
-3. ZIP — 纯 Python zipfile 打包（最终回退）
+1. Docker + Inno Setup — 交叉编译标准 Windows 安装包（推荐）
+2. NSIS — Nullsoft 安装包（Windows 本机）
+3. IExpress — Windows 内置工具
+4. ZIP — 纯 Python zipfile 打包（最终回退）
 """
 
 import os
@@ -14,6 +15,7 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+import time
 from pathlib import Path
 
 # --- 从源码读取版本号 ---
@@ -147,7 +149,163 @@ pause
 
 
 # =============================================================================
-# 方式一：NSIS
+# 方式一：Docker + Inno Setup（首选）
+# =============================================================================
+
+_DOCKER_IMAGE = "lan-invoice-iss"
+_DOCKERFILE = PROJECT_ROOT / "scripts" / "Dockerfile.innosetup"
+
+
+def _docker_available() -> bool:
+    """检查 docker 是否可用。"""
+    try:
+        result = subprocess.run(
+            ["docker", "version"], capture_output=True, timeout=10)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _docker_image_ready() -> bool:
+    """确保 Inno Setup Docker 镜像存在，不存在则构建。"""
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", _DOCKER_IMAGE],
+            capture_output=True, timeout=10)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def build_with_docker_innosetup(source_dir: Path) -> bool:
+    """使用 Docker + Wine + Inno Setup 交叉编译 Windows 安装包。
+
+    适用于没有原生 Inno Setup 的环境（CI/CD、非 Windows 主机等）。
+    Wine 下中文文件名会被写乱码，编译后自动重命名修复。
+    """
+    if not _docker_available():
+        print("[INFO] Docker 不可用")
+        return False
+
+    print("[INFO] 使用 Docker + Inno Setup 编译安装包...")
+
+    # 确保镜像存在
+    if not _docker_image_ready():
+        print("       [0/3] 构建 Docker 镜像（仅首次）...")
+        result = subprocess.run(
+            ["docker", "build", "-t", _DOCKER_IMAGE,
+             "-f", str(_DOCKERFILE), "."],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"[WARN] Docker 镜像构建失败:\n{result.stderr[-500:]}")
+            return False
+        print("       [0/3] 镜像就绪")
+
+    # 生成 .iss 脚本（引用 ASCII 安全文件名，输出中文文件名）
+    iss_content = _generate_iss(source_dir)
+    iss_path = source_dir / "setup.iss"
+    iss_path.write_text(iss_content, encoding="utf-8")
+
+    # 映射路径：Wine 下 Z:\work → 宿主 source_dir
+    src_abs = str(source_dir.resolve()).replace("\\", "/")
+    docker_vol = f"{src_abs}:/work"
+
+    print("       [1/3] 编译 Inno Setup 脚本...")
+    # 禁用 Git Bash 路径转换 (MSYS_NO_PATHCONV=1)
+    env = os.environ.copy()
+    env["MSYS_NO_PATHCONV"] = "1"
+
+    result = subprocess.run(
+        ["docker", "run", "--rm",
+         "-v", docker_vol,
+         _DOCKER_IMAGE,
+         "Z:\\work\\setup.iss"],
+        capture_output=True, text=True, timeout=120,
+        env=env,
+    )
+
+    # 查找输出：Wine 下中文文件名变乱码，但文件会出现在 dist 目录
+    # Inno Setup 输出时 filename 指定为 ASCII，避免乱码
+    if result.returncode != 0:
+        # 检查是否是因缺少 Xvfb 导致的 warning（可忽略）
+        stderr_lines = result.stderr.strip().split("\n")
+        actual_errors = [l for l in stderr_lines
+                        if "err:" in l and "winediag" not in l
+                        and "ole:" not in l and "marshal" not in l]
+        if actual_errors:
+            print(f"[WARN] Inno Setup 编译警告:\n" +
+                  "\n".join(actual_errors[-5:]))
+
+    print("       [2/3] 修复乱码文件名...")
+    setup_exe_ascii = source_dir / "InvoiceArchive_Setup.exe"
+    if setup_exe_ascii.exists():
+        # 重命名为正确的中文文件名
+        target = SETUP_EXE  # 全局定义的输出路径
+        if target.exists():
+            target.unlink()
+        setup_exe_ascii.replace(target)
+        size_mb = target.stat().st_size / 1024 / 1024
+        print(f"       [3/3] 完成 ({size_mb:.1f} MB)")
+        print(f"[OK] 安装包创建成功")
+        return True
+
+    # 兜底：尝试查找任何刚刚生成的 .exe
+    cutoff = time.time() - 120
+    for f in source_dir.iterdir():
+        if f.suffix == ".exe" and f.stat().st_mtime > cutoff \
+           and "setup" in f.name.lower() and f != EXE_SRC:
+            target = SETUP_EXE
+            if target.exists():
+                target.unlink()
+            f.replace(target)
+            size_mb = target.stat().st_size / 1024 / 1024
+            print(f"       [3/3] 完成 ({size_mb:.1f} MB)")
+            print(f"[OK] 安装包创建成功")
+            return True
+
+    print("[WARN] Inno Setup 编译完成但未找到输出文件")
+    if result.stdout:
+        print(result.stdout[-500:])
+    return False
+
+
+def _generate_iss(source_dir: Path) -> str:
+    """生成 Inno Setup 6 安装脚本。
+
+    关键技巧：Source 引用 ASCII 文件名（Wine 兼容），
+    DestName 还原中文名（安装后显示正确）。
+    OutputBaseFilename 也使用 ASCII 避免 Wine 乱码。
+    """
+    return f"""; Inno Setup Script — 自动生成 (v{APP_VERSION})
+[Setup]
+AppName={APP_NAME}
+AppVersion={APP_VERSION}
+AppPublisher=GUYI33
+DefaultDirName={{pf}}\\{APP_DIR_NAME}
+DefaultGroupName={APP_DIR_NAME}
+Compression=lzma2/ultra64
+SolidCompression=yes
+UninstallDisplayName={APP_NAME}
+OutputDir=./
+OutputBaseFilename=InvoiceArchive_Setup
+
+[Files]
+Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{EXE_NAME}"
+
+[Icons]
+Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{commondesktop}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
+
+[Run]
+Filename: "{{app}}\\{EXE_NAME}"; Description: "启动 {APP_NAME}"; \
+Flags: nowait postinstall
+"""
+
+
+# =============================================================================
+# 方式二：NSIS（备选）
 # =============================================================================
 
 def _find_makensis() -> str | None:
@@ -404,15 +562,20 @@ def main():
 
         print()
 
-        # ---- 方式1: NSIS ----
-        ok = build_with_nsis(tmp_path)
+        # ---- 方式1: Docker + Inno Setup（首选） ----
+        ok = build_with_docker_innosetup(tmp_path)
 
-        # ---- 方式2: IExpress ----
+        # ---- 方式2: NSIS（Windows 本机） ----
+        if not ok:
+            print("[INFO] Docker 不可用，尝试 NSIS...")
+            ok = build_with_nsis(tmp_path)
+
+        # ---- 方式3: IExpress（Windows 内置） ----
         if not ok:
             print("[INFO] NSIS 不可用，尝试 IExpress...")
             ok = build_with_iexpress(tmp_path)
 
-        # ---- 方式3: ZIP ----
+        # ---- 方式4: ZIP（纯 Python 回退） ----
         if not ok:
             print("[INFO] IExpress 也不可用，改用 ZIP...")
             ok = build_with_zip(tmp_path)
