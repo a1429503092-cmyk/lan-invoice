@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""MCP Server — stdio JSON-RPC，委托 InvoiceService 处理业务"""
+"""MCP Server — stdio JSON-RPC，委托 InvoiceService 处理业务
+协议版本: 2026-07-28（向后兼容 2024-11-05 旧客户端）
+"""
 
 import sys
 import os
@@ -8,11 +10,27 @@ import json
 from database import Database
 from backup import BackupService
 from config_manager import ConfigManager
-from services.invoice_service import InvoiceService
+from services.invoice_service import InvoiceService, VALID_SORT_FIELDS
 from version import APP_VERSION
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
+
+# ── 协议常量 ────────────────────────────────
+
+PROTOCOL_VERSION = "2026-07-28"
+SUPPORTED_VERSIONS = ["2026-07-28", "2025-11-25", "2024-11-05"]
+
+# _meta 键名（2026-07-28 规范）
+META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
+META_LOG_LEVEL = "io.modelcontextprotocol/logLevel"
+
+# 默认缓存 TTL（毫秒）
+_DEFAULT_TTL_MS = 300000  # 5 分钟
+_TOOL_LIST_TTL_MS = 600000  # 工具列表 10 分钟（变化极少）
 
 
 class McpServer:
@@ -76,30 +94,131 @@ class McpServer:
         method = req.get("method", "")
         rid = req.get("id")
 
+        # ── 2026-07-28: _meta 协议版本检查 ──
+        meta = req.get("_meta", {})
+        client_ver = meta.get(META_PROTOCOL_VERSION, "")
+        if client_ver and client_ver not in SUPPORTED_VERSIONS:
+            return self._err(rid, -32022,
+                f"Unsupported protocol version: {client_ver}. "
+                f"Supported: {', '.join(SUPPORTED_VERSIONS)}")
+
+        # ── server/discover（2026-07-28 新握手）──
+        if method == "server/discover":
+            return self._discover(rid)
+
+        # ── 向后兼容：initialize（2024-11-05 旧握手）──
         if method == "initialize":
-            return self._ok(rid, {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}, "resources": {}},
-                "serverInfo": {"name": "invoice-tool", "version": APP_VERSION},
-            })
+            return self._legacy_initialize(rid, req.get("params", {}))
+
+        # ── 2026-07-28 无状态：不再需要 initialized 通知 ──
         if method == "notifications/initialized":
             return None
+
+        # ── 工具/资源 ──
         if method == "tools/list":
-            return self._ok(rid, {"tools": self._tool_defs()})
+            return self._ok(rid, {"tools": self._tool_defs()},
+                           ttl_ms=_TOOL_LIST_TTL_MS)
         if method == "tools/call":
             return self._ok(rid, self._call_tool(req.get("params", {})))
         if method == "resources/list":
-            return self._ok(rid, {"resources": self._resource_defs()})
+            return self._ok(rid, {"resources": self._resource_defs()},
+                           ttl_ms=_DEFAULT_TTL_MS)
         if method == "resources/read":
-            return self._ok(rid, self._read_resource(req.get("params", {})))
+            return self._ok(rid, self._read_resource(req.get("params", {})),
+                           ttl_ms=_DEFAULT_TTL_MS)
+
+        # ── 已废弃方法（向后兼容） ──
+        if method == "ping":
+            return self._ok(rid, {})
+
         return self._err(rid, -32601, f"Unknown method: {method}")
 
-    def _ok(self, rid, result):
-        return {"jsonrpc": "2.0", "id": rid, "result": result}
+    # ── server/discover ────────────────────────
+
+    def _discover(self, rid):
+        """2026-07-28 协议发现端点"""
+        return {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "result": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "supportedProtocolVersions": SUPPORTED_VERSIONS,
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "extensions": {
+                        "io.modelcontextprotocol/tasks": {
+                            "supportedMethods": ["tasks/get"],
+                        },
+                    },
+                },
+                "serverInfo": {
+                    "name": "invoice-tool",
+                    "version": APP_VERSION,
+                },
+            },
+        }
+
+    def _legacy_initialize(self, rid, params: dict):
+        """向后兼容 2024-11-05 旧客户端 initialize"""
+        client_ver = params.get("protocolVersion", "")
+        if client_ver and client_ver not in SUPPORTED_VERSIONS:
+            return self._err(rid, -32022,
+                f"Unsupported protocol version: {client_ver}")
+        # 旧客户端未指定版本时使用 2024-11-05
+        effective_ver = client_ver or "2024-11-05"
+        return {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "result": {
+                "protocolVersion": effective_ver,
+                "capabilities": {"tools": {}, "resources": {}},
+                "serverInfo": {
+                    "name": "invoice-tool",
+                    "version": APP_VERSION,
+                },
+            },
+        }
+
+    # ── 响应构造 ──────────────────────────────
+
+    def _ok(self, rid, result, ttl_ms: int | None = None):
+        """构造成功响应。2026-07-28 要求 resultType + _meta"""
+        resp = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "result": result,
+        }
+        # resultType（2026-07-28 必填）
+        if isinstance(result, dict):
+            result["resultType"] = "complete"
+
+        # _meta（2026-07-28 新规范：每次响应带 serverInfo）
+        meta = {
+            META_SERVER_INFO: {
+                "name": "invoice-tool",
+                "version": APP_VERSION,
+            },
+        }
+        if ttl_ms is not None:
+            meta["ttlMs"] = ttl_ms
+            meta["cacheScope"] = "private"
+        resp["_meta"] = meta
+        return resp
 
     def _err(self, rid, code, message):
-        return {"jsonrpc": "2.0", "id": rid,
-                "error": {"code": code, "message": message}}
+        resp = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "error": {"code": code, "message": message},
+        }
+        resp["_meta"] = {
+            META_SERVER_INFO: {
+                "name": "invoice-tool",
+                "version": APP_VERSION,
+            },
+        }
+        return resp
 
     # ── 工具定义 ──────────────────────────────
 
@@ -107,72 +226,132 @@ class McpServer:
         return [
             {"name": "search_invoices",
              "description": "搜索/筛选发票记录。可按年份、月份、发票类型、销售方、购买方、标签、关键词筛选，支持排序和分页。",
-             "inputSchema": {"type": "object", "properties": {
-                 "year": {"type": "integer"}, "month": {"type": "integer"},
-                 "invoice_type": {"type": "string"}, "seller": {"type": "string"},
-                 "buyer": {"type": "string"}, "tag": {"type": "string"},
-                 "keyword": {"type": "string"},
-                 "sort_by": {"type": "string"}, "sort_asc": {"type": "boolean"},
-                 "limit": {"type": "integer"}, "offset": {"type": "integer"},
-             }}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "year": {"type": "integer"},
+                     "month": {"type": "integer"},
+                     "invoice_type": {"type": "string"},
+                     "seller": {"type": "string"},
+                     "buyer": {"type": "string"},
+                     "tag": {"type": "string"},
+                     "keyword": {"type": "string"},
+                     "sort_by": {"type": "string"},
+                     "sort_asc": {"type": "boolean"},
+                     "limit": {"type": "integer"},
+                     "offset": {"type": "integer"},
+                 },
+             }},
             {"name": "import_invoice",
              "description": "导入单个 PDF 发票，解析并存入数据库。批量导入请用 import_invoices_batch。",
-             "inputSchema": {"type": "object", "properties": {
-                 "pdf_path": {"type": "string"},
-                 "tags": {"type": "object"},
-                 "remark": {"type": "string"},
-             }, "required": ["pdf_path"]}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "pdf_path": {"type": "string"},
+                     "tags": {"type": "object"},
+                     "remark": {"type": "string"},
+                 },
+                 "required": ["pdf_path"],
+             }},
             {"name": "import_invoices_batch",
              "description": "批量导入多个 PDF 发票——并行解析 + 单事务写入，比逐条导入快 10-100 倍。传入 PDF 文件路径列表或目录路径（自动扫描目录下所有 PDF）。",
-             "inputSchema": {"type": "object", "properties": {
-                 "pdf_paths": {"type": "array", "items": {"type": "string"},
-                               "description": "PDF 文件路径列表"},
-                 "directory": {"type": "string",
-                               "description": "目录路径，自动扫描该目录下所有 .pdf 文件"},
-                 "tags": {"type": "object", "description": "统一标签，应用到所有导入的发票"},
-                 "remark": {"type": "string", "description": "统一备注"},
-                 "parallel": {"type": "integer", "default": 4,
-                              "description": "并行解析线程数（默认 4）"},
-             }}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "pdf_paths": {
+                         "type": "array", "items": {"type": "string"},
+                         "description": "PDF 文件路径列表",
+                     },
+                     "directory": {
+                         "type": "string",
+                         "description": "目录路径，自动扫描该目录下所有 .pdf 文件",
+                     },
+                     "tags": {"type": "object",
+                              "description": "统一标签，应用到所有导入的发票"},
+                     "remark": {"type": "string", "description": "统一备注"},
+                     "parallel": {"type": "integer", "default": 4,
+                                  "description": "并行解析线程数（默认 4）"},
+                 },
+             }},
             {"name": "export_excel",
              "description": "导出当前筛选结果为 Excel 文件。",
-             "inputSchema": {"type": "object", "properties": {
-                 "output_path": {"type": "string"},
-                 "year": {"type": "integer"}, "month": {"type": "integer"},
-                 "invoice_type": {"type": "string"}, "seller": {"type": "string"},
-             }}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "output_path": {"type": "string"},
+                     "year": {"type": "integer"},
+                     "month": {"type": "integer"},
+                     "invoice_type": {"type": "string"},
+                     "seller": {"type": "string"},
+                 },
+             }},
             {"name": "get_summary",
              "description": "获取数据库统计摘要：总记录数、金额/税额/价税合计、类型分布。",
-             "inputSchema": {"type": "object", "properties": {
-                 "year": {"type": "integer"}, "month": {"type": "integer"},
-             }}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "year": {"type": "integer"},
+                     "month": {"type": "integer"},
+                 },
+             }},
             {"name": "manage_tags",
              "description": "管理标签模板：列出所有、添加、删除。",
-             "inputSchema": {"type": "object", "properties": {
-                 "action": {"type": "string", "enum": ["list", "add", "delete"]},
-                 "tag_name": {"type": "string"},
-             }, "required": ["action"]}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "action": {"type": "string",
+                                "enum": ["list", "add", "delete"]},
+                     "tag_name": {"type": "string"},
+                 },
+                 "required": ["action"],
+             }},
             {"name": "update_invoice",
              "description": "修改发票记录的标签值和备注。",
-             "inputSchema": {"type": "object", "properties": {
-                 "invoice_no": {"type": "string"},
-                 "tags": {"type": "object"},
-                 "remark": {"type": "string"},
-             }, "required": ["invoice_no"]}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "invoice_no": {"type": "string"},
+                     "tags": {"type": "object"},
+                     "remark": {"type": "string"},
+                 },
+                 "required": ["invoice_no"],
+             }},
             {"name": "add_attachment",
              "description": "给指定发票添加附件（截图、文档等）。",
-             "inputSchema": {"type": "object", "properties": {
-                 "invoice_no": {"type": "string"},
-                 "file_paths": {"type": "array", "items": {"type": "string"}},
-             }, "required": ["invoice_no", "file_paths"]}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "invoice_no": {"type": "string"},
+                     "file_paths": {"type": "array",
+                                    "items": {"type": "string"}},
+                 },
+                 "required": ["invoice_no", "file_paths"],
+             }},
             {"name": "delete_invoice",
              "description": "删除一条发票记录及其关联 PDF 文件。",
-             "inputSchema": {"type": "object", "properties": {
-                 "invoice_no": {"type": "string"},
-             }, "required": ["invoice_no"]}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "invoice_no": {"type": "string"},
+                 },
+                 "required": ["invoice_no"],
+             }},
             {"name": "check_update",
              "description": "检查 Gitee 是否有新版本发布。",
-             "inputSchema": {"type": "object", "properties": {}}},
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {},
+             }},
         ]
 
     # ── 资源定义 ──────────────────────────────
@@ -197,7 +376,9 @@ class McpServer:
         if uri == "invoices://tags":
             return {"contents": [{"uri": uri, "mimeType": "application/json",
                     "text": json.dumps(self._config.tag_templates, ensure_ascii=False)}]}
-        return {"contents": [{"uri": uri, "mimeType": "text/plain",
+        # 2026-07-28: 资源未找到用 -32602（与原 JSON-RPC 一致）
+        return {"isError": True,
+                "contents": [{"uri": uri, "mimeType": "text/plain",
                 "text": f"Unknown resource: {uri}"}]}
 
     # ── 工具调度 ──────────────────────────────

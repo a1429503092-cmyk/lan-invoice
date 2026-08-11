@@ -148,8 +148,11 @@ class Database:
 
     def search(self, *, year=None, month=None, invoice_type=None,
                seller=None, buyer=None, tag=None, keyword=None,
-               sort_by=None, sort_asc=True, limit=50, offset=0) -> tuple[int, list[Invoice]]:
-        """SQL 级搜索，返回 (total_count, page)。比 load 全量 + Python 过滤快得多"""
+               sort_by=None, sort_asc=True, limit=50, offset=0,
+               aggregates: bool = False) -> tuple[int, list[Invoice], dict[str, float]]:
+        """SQL 级搜索，返回 (total_count, page, aggregates)。
+        aggregates 包含 total_amount / total_tax / total_with_tax，仅 aggregates=True 时计算。
+        比 load 全量 + Python 过滤快得多。"""
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
@@ -177,10 +180,13 @@ class Database:
                     where.append("tags LIKE ?")
                     params.append(f"%{tag}%")
                 if keyword:
-                    # 关键字搜索覆盖主要文本字段
+                    # 关键字搜索覆盖全部可搜索文本字段
                     kw = f"%{keyword}%"
-                    fields = ["file", "buyer_name", "buyer_tax_id", "seller_name",
-                              "invoice_type", "invoice_no", "remark"]
+                    fields = ["file", "company", "buyer_name", "buyer_tax_id",
+                              "seller_name", "invoice_type", "amount",
+                              "tax_rate", "tax_amount", "total",
+                              "invoice_no", "invoice_date", "remark",
+                              "error", "tags", "attachments"]
                     like_clauses = " OR ".join(f"{f} LIKE ?" for f in fields)
                     where.append(f"({like_clauses})")
                     params.extend([kw] * len(fields))
@@ -192,6 +198,22 @@ class Database:
                     f"SELECT COUNT(*) FROM invoices WHERE {where_clause}",
                     params).fetchone()
                 total = count_row[0] if count_row else 0
+
+                # 聚合（全量匹配记录的金额汇总）
+                aggs: dict[str, float] = {}
+                if aggregates and total > 0:
+                    agg_row = conn.execute(
+                        f"SELECT "
+                        f"SUM(CAST(amount AS REAL)), "
+                        f"SUM(CAST(tax_amount AS REAL)), "
+                        f"SUM(CAST(total AS REAL)) "
+                        f"FROM invoices WHERE {where_clause}",
+                        params).fetchone()
+                    aggs = {
+                        "total_amount": agg_row[0] or 0.0,
+                        "total_tax": agg_row[1] or 0.0,
+                        "total_with_tax": agg_row[2] or 0.0,
+                    }
 
                 # 排序（校验排序字段防注入）
                 order = "id ASC"
@@ -232,10 +254,10 @@ class Database:
                         inv.tags = all_tags[rid]
                     invoices.append(inv)
 
-                return total, invoices
+                return total, invoices, aggs
         except sqlite3.Error as e:
             log.error("搜索失败: %s", e)
-            return 0, []
+            return 0, [], {}
 
     def _row_to_invoice(self, row) -> Invoice:
         # 兼容旧数据：screenshots/contracts → attachments 合并（与 from_dict 一致）

@@ -52,9 +52,9 @@ class TestMcpProtocol(unittest.TestCase):
         self.assertIn("resources", result["capabilities"])
         self.assertEqual(result["serverInfo"]["name"], "invoice-tool")
 
-    def test_tools_list_returns_9_tools(self):
+    def test_tools_list_returns_10_tools(self):
         r = self.s._handle({"id": 1, "method": "tools/list"})
-        self.assertEqual(len(r["result"]["tools"]), 9)
+        self.assertEqual(len(r["result"]["tools"]), 10)
 
     def test_tools_call_unknown_returns_isError(self):
         r = self.s._handle({"id": 1, "method": "tools/call",
@@ -263,7 +263,7 @@ class TestImportInvoice(unittest.TestCase):
 
     def test_missing_pdf_path(self):
         r = self._call({})
-        self.assertIn("pdf_path", r["error"])
+        self.assertIn("文件不存在", r["error"])
 
     def test_nonexistent_file(self):
         r = self._call({"pdf_path": os.path.join(self.tmp, "no.pdf")})
@@ -333,7 +333,7 @@ class TestManageTags(unittest.TestCase):
         r = self.s._handle({"id": 1, "method": "tools/call",
                            "params": {"name": "manage_tags", "arguments": {}}})
         c = json.loads(r["result"]["content"][0]["text"])
-        self.assertIn("action", c["error"])
+        self.assertIn("未知操作", c["error"])
 
     def test_unknown_action(self):
         r = self._call({"action": "invalid"})
@@ -393,7 +393,7 @@ class TestUpdateInvoice(unittest.TestCase):
         r = self.s._handle({"id": 1, "method": "tools/call",
                            "params": {"name": "update_invoice", "arguments": {}}})
         c = json.loads(r["result"]["content"][0]["text"])
-        self.assertIn("invoice_no", c["error"])
+        self.assertIn("未找到发票号", c["error"])
 
     def test_null_tags_noop(self):
         r = self._call({"invoice_no": "111", "tags": None})
@@ -424,7 +424,7 @@ class TestAddAttachment(unittest.TestCase):
 
     def test_missing_invoice_no(self):
         r = self._call({"file_paths": ["/a.png"]})
-        self.assertIn("invoice_no", r["error"])
+        self.assertIn("未找到发票号", r["error"])
 
     def test_missing_file_paths(self):
         r = self._call({"invoice_no": "111"})
@@ -498,7 +498,7 @@ class TestDeleteInvoice(unittest.TestCase):
         r = self.s._handle({"id": 1, "method": "tools/call",
                            "params": {"name": "delete_invoice", "arguments": {}}})
         c = json.loads(r["result"]["content"][0]["text"])
-        self.assertIn("invoice_no", c["error"])
+        self.assertIn("未找到发票号", c["error"])
 
 
 class TestGetSummary(unittest.TestCase):

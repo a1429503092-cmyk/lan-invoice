@@ -3,7 +3,6 @@
 
 import os
 import re
-import json
 import shutil
 import time
 from datetime import datetime
@@ -120,43 +119,35 @@ class InvoiceService:
     # ── 搜索 ──────────────────────────────────
 
     def search(self, **kwargs) -> dict:
-        from utils import safe_float
-        keyword = (kwargs.get("keyword") or "").lower()
+        sort_by = kwargs.get("sort_by")
+        if sort_by and sort_by not in VALID_SORT_FIELDS:
+            raise ValueError(f"不支持的排序字段: {sort_by}")
 
-        # SQL 级搜索（筛选 + 排序 + 分页），不走 load 全量
-        total, invs = self._db.search(
+        # SQL 级搜索（筛选 + 排序 + 分页），带聚合
+        total, invs, aggs = self._db.search(
             year=kwargs.get("year"),
             month=kwargs.get("month"),
             invoice_type=kwargs.get("invoice_type"),
             seller=kwargs.get("seller"),
             buyer=kwargs.get("buyer"),
             tag=kwargs.get("tag"),
-            sort_by=kwargs.get("sort_by"),
+            keyword=kwargs.get("keyword"),
+            sort_by=sort_by,
             sort_asc=kwargs.get("sort_asc", True),
             limit=kwargs.get("limit", 50),
             offset=kwargs.get("offset", 0),
+            aggregates=True,
         )
 
-        # keyword 目前仍需 Python 二次过滤（LIKE 复合字段不全）
-        filtered = []
-        for inv in invs:
-            if keyword:
-                full = json.dumps(self._inv_dict(inv), ensure_ascii=False).lower()
-                if keyword not in full:
-                    total -= 1  # 精确计数
-                    continue
-            filtered.append(self._inv_dict(inv))
-
-        # 如果是 keyword 过滤过的，重算分页（已经在 offset/limit 内了）
-        page = filtered
+        filtered = [self._inv_dict(inv) for inv in invs]
 
         return {
             "count": total,
-            "returned": len(page),
-            "total_amount": sum(safe_float(r.get("amount")) for r in page),
-            "total_tax": sum(safe_float(r.get("tax_amount")) for r in page),
-            "total_with_tax": sum(safe_float(r.get("total")) for r in page),
-            "records": page,
+            "returned": len(filtered),
+            "total_amount": aggs.get("total_amount", 0.0),
+            "total_tax": aggs.get("total_tax", 0.0),
+            "total_with_tax": aggs.get("total_with_tax", 0.0),
+            "records": filtered,
         }
 
     # ── 导入（单条）─────────────────────────────
@@ -359,8 +350,8 @@ class InvoiceService:
 
         # SQL 级聚合（不再 load 全量）
         if year or month:
-            total, invs = self._db.search(year=year, month=month,
-                                          limit=999999, offset=0)
+            total, invs, _ = self._db.search(year=year, month=month,
+                                             limit=999999, offset=0)
             types = {}
             for inv in invs:
                 t = inv.invoice_type or "未知"
@@ -395,7 +386,7 @@ class InvoiceService:
             return {"tags": templates}
         if action not in ("add", "delete"):
             return {"error": f"未知操作: {action}"}
-        name = tag_name.strip()
+        name = (tag_name or "").strip()
         if not name:
             return {"error": "tag_name 不能为空"}
         if action == "add":
