@@ -15,6 +15,17 @@ log = getLogger(__name__)
 # 匹配两个非 ASCII 字符之间的空白（消除部分 PDF 中文间多余空格）
 _CJK_SPACE_RE = re.compile(r'(?<=[^\x00-\x7f])\s+(?=[^\x00-\x7f])')
 
+# 孤立代理字符 U+D800–U+DFFF 映射到 U+FFFD 的转换表
+# pdfplumber 偶发产生此类非法 Unicode 字符，必须在此清洗，否则会触发 UTF-8 编码崩溃
+_SURROGATE_TABLE = {c: ord('�') for c in range(0xd800, 0xe000)}
+
+
+def _sanitize_str(text: str) -> str:
+    """清洗字符串中的非法代理字符，替换为 �"""
+    if not text:
+        return text
+    return text.translate(_SURROGATE_TABLE)
+
 
 def _extract_pdf_text(pdf_path: str) -> str:
     """从 PDF 提取全部文本（含表格内容），返回字符串"""
@@ -23,12 +34,13 @@ def _extract_pdf_text(pdf_path: str) -> str:
         for page in pdf.pages:
             t = page.extract_text()
             if t:
-                full_text += t + "\n"
+                full_text += _sanitize_str(t) + "\n"
             try:
                 for table in page.extract_tables():
                     for row in table:
                         if row:
-                            full_text += " ".join(str(c) or "" for c in row) + "\n"
+                            full_text += _sanitize_str(
+                                " ".join(str(c) or "" for c in row)) + "\n"
             except Exception:
                 pass
     return full_text

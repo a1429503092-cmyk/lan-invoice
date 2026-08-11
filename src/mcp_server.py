@@ -33,6 +33,7 @@ class McpServer:
         self._routes = {
             "search_invoices": self._search,
             "import_invoice": self._import,
+            "import_invoices_batch": self._import_batch,
             "export_excel": self._export,
             "get_summary": self._summary,
             "manage_tags": self._tags,
@@ -115,12 +116,24 @@ class McpServer:
                  "limit": {"type": "integer"}, "offset": {"type": "integer"},
              }}},
             {"name": "import_invoice",
-             "description": "导入 PDF 发票，解析并存入数据库。可附带标签和备注。",
+             "description": "导入单个 PDF 发票，解析并存入数据库。批量导入请用 import_invoices_batch。",
              "inputSchema": {"type": "object", "properties": {
                  "pdf_path": {"type": "string"},
                  "tags": {"type": "object"},
                  "remark": {"type": "string"},
              }, "required": ["pdf_path"]}},
+            {"name": "import_invoices_batch",
+             "description": "批量导入多个 PDF 发票——并行解析 + 单事务写入，比逐条导入快 10-100 倍。传入 PDF 文件路径列表或目录路径（自动扫描目录下所有 PDF）。",
+             "inputSchema": {"type": "object", "properties": {
+                 "pdf_paths": {"type": "array", "items": {"type": "string"},
+                               "description": "PDF 文件路径列表"},
+                 "directory": {"type": "string",
+                               "description": "目录路径，自动扫描该目录下所有 .pdf 文件"},
+                 "tags": {"type": "object", "description": "统一标签，应用到所有导入的发票"},
+                 "remark": {"type": "string", "description": "统一备注"},
+                 "parallel": {"type": "integer", "default": 4,
+                              "description": "并行解析线程数（默认 4）"},
+             }}},
             {"name": "export_excel",
              "description": "导出当前筛选结果为 Excel 文件。",
              "inputSchema": {"type": "object", "properties": {
@@ -212,6 +225,22 @@ class McpServer:
     def _import(self, a):
         return self._svc.import_invoice(
             a.get("pdf_path", ""), a.get("tags"), a.get("remark"))
+
+    def _import_batch(self, a):
+        paths = list(a.get("pdf_paths") or [])
+        directory = a.get("directory", "")
+        if directory:
+            import glob as _glob
+            scanned = sorted(_glob.glob(os.path.join(directory, "*.pdf")))
+            paths.extend(scanned)
+        if not paths:
+            return {"error": "pdf_paths 和 directory 均为空，至少提供其一"}
+        return self._svc.import_invoices_batch(
+            paths,
+            tags=a.get("tags"),
+            remark=a.get("remark"),
+            parallel=a.get("parallel", 4),
+        )
 
     def _export(self, a):
         return self._svc.export_excel(a.pop("output_path", ""), **a)

@@ -143,7 +143,7 @@ class StatsPanel(QDialog):
         types = defaultdict(float)
         for r in records:
             t = r.get("invoice_type", "未知")
-            types[t] += safe_float(r.get("amount"))
+            types[t] += abs(safe_float(r.get("amount")))
         labels = list(types.keys())
         sizes = list(types.values())
         if sum(sizes) <= 0:

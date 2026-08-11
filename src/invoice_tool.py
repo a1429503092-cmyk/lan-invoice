@@ -115,6 +115,7 @@ class InvoiceApp(QMainWindow):
         self._load_data()
         log.info("InvoiceApp 初始化完成 | 版本=%s | 数据目录=%s",
                  APP_VERSION, self._data_dir)
+
         QTimer.singleShot(500, self._check_desktop_shortcut)
         self._update_checker = UpdateChecker(APP_VERSION, self)
         self._update_checker.set_skipped_version(self._config.skipped_version)
@@ -503,6 +504,7 @@ class InvoiceApp(QMainWindow):
         # Splitter: 表格（左） | 预览（右）
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
+        splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         splitter.addWidget(table_area)
         splitter.addWidget(self._preview_panel)
         splitter.setSizes([700, 0])  # 初始预览隐藏

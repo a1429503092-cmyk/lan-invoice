@@ -5,5 +5,8 @@
     "wechatpay-medical-insurance-payment": "name-only",
     "wechatpay-payscore": "name-only",
     "wechatpay-product-coupon": "name-only"
-  }
+  },
+  "disabledMcpjsonServers": [
+    "invoice"
+  ]
 }
