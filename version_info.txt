@@ -20,7 +20,7 @@ VSVersionInfo(
          StringStruct(u'FileVersion', u'5.5.0'),
          StringStruct(u'InternalName', u'发票归档'),
          StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
-         StringStruct(u'OriginalFilename', u'发票归档_v5.5.0.exe'),
+         StringStruct(u'OriginalFilename', u'lan-invoice_v5.5.0.exe'),
          StringStruct(u'ProductName', u'发票归档'),
          StringStruct(u'ProductVersion', u'5.5.0')])
     ]),

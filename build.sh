@@ -10,11 +10,11 @@ cd "$(dirname "$0")"
 
 # ---- 版本号 ----
 VER=$(uv run python -c "from src.version import APP_VERSION; print(APP_VERSION)" 2>/dev/null || echo "0.0.0")
-EXE_NAME="发票归档_${VER}"
+EXE_NAME="lan-invoice_${VER}"
 DIST_DIR="dist"
 
 echo "============================================================"
-echo "    发票归档 v${VER} 一键打包"
+echo "    lan-invoice v${VER} 一键打包"
 echo "============================================================"
 echo ""
 

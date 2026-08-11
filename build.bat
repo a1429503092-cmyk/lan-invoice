@@ -15,10 +15,10 @@ for /f "tokens=2 delims= " %%v in ('uv run python -c "from src.version import AP
 if "%VER%"=="" set VER=0.0.0
 
 set "DIST_DIR=dist"
-set "EXE_NAME=发票归档_%VER%"
+set "EXE_NAME=lan-invoice_%VER%"
 
 echo ============================================================
-echo     发票归档 v%VER% 一键打包
+echo     lan-invoice v%VER% 一键打包
 echo ============================================================
 echo.
 

@@ -35,17 +35,19 @@ APP_NAME = "发票归档"
 APP_VERSION = _read_version()
 APP_DIR_NAME = "发票归档"
 
-# 文件名去掉点号避免部分工具解析异常
+# 文件名：统一英文避免 Wine / Git Bash / CI 中文编码问题
 VER_TAG = APP_VERSION.replace(".", "_")
-EXE_NAME = f"发票归档_{APP_VERSION}.exe"
+EXE_NAME = f"lan-invoice_{APP_VERSION}.exe"          # 便携版
+SETUP_NAME = f"lan-invoice_{APP_VERSION}_setup.exe"   # 安装包
+ZIP_NAME = f"lan-invoice_{APP_VERSION}_portable.zip"  # 便携 ZIP
 
 DIST_DIR = PROJECT_ROOT / "dist"
 EXE_SRC = DIST_DIR / EXE_NAME
 ICON_SRC = PROJECT_ROOT / "icon.ico"
-SETUP_EXE = DIST_DIR / f"发票归档_{APP_VERSION}_setup.exe"
-SETUP_ZIP = DIST_DIR / f"发票归档_{APP_VERSION}_setup.zip"
+SETUP_EXE = DIST_DIR / SETUP_NAME
+SETUP_ZIP = DIST_DIR / ZIP_NAME
 
-ASCII_EXE_NAME = f"invoice_archive_{VER_TAG}.exe"
+ASCII_EXE_NAME = f"lan_invoice_{VER_TAG}.exe"
 
 
 
@@ -238,47 +240,32 @@ def build_with_docker_innosetup(source_dir: Path) -> bool:
             print(f"[WARN] Inno Setup 编译警告:\n" +
                   "\n".join(actual_errors[-5:]))
 
-    print("       [2/3] 修复乱码文件名...")
-    setup_exe_ascii = source_dir / "InvoiceArchive_Setup.exe"
-    if setup_exe_ascii.exists():
-        # 重命名为正确的中文文件名
-        target = SETUP_EXE  # 全局定义的输出路径
-        if target.exists():
-            target.unlink()
-        setup_exe_ascii.replace(target)
-        size_mb = target.stat().st_size / 1024 / 1024
-        print(f"       [3/3] 完成 ({size_mb:.1f} MB)")
+    # 查找输出文件（英文名，Wine 不会写乱码）
+    output_exe = source_dir / SETUP_NAME
+    if output_exe.exists():
+        size_mb = output_exe.stat().st_size / 1024 / 1024
+        print(f"       [2/3] 完成 ({size_mb:.1f} MB)")
         print(f"[OK] 安装包创建成功")
         return True
 
-    # 兜底：尝试查找任何刚刚生成的 .exe
+    # 兜底：Inno Setup 可能把文件写到不同位置
     cutoff = time.time() - 120
     for f in source_dir.iterdir():
-        if f.suffix == ".exe" and f.stat().st_mtime > cutoff \
-           and "setup" in f.name.lower() and f != EXE_SRC:
-            target = SETUP_EXE
-            if target.exists():
-                target.unlink()
-            f.replace(target)
-            size_mb = target.stat().st_size / 1024 / 1024
-            print(f"       [3/3] 完成 ({size_mb:.1f} MB)")
+        if f.suffix == ".exe" and "setup" in f.name.lower() \
+           and f.stat().st_mtime > cutoff:
+            shutil.move(str(f), str(output_exe))
             print(f"[OK] 安装包创建成功")
             return True
 
-    print("[WARN] Inno Setup 编译完成但未找到输出文件")
+    print("[WARN] 安装包生成失败")
     if result.stdout:
         print(result.stdout[-500:])
     return False
 
 
 def _generate_iss(source_dir: Path) -> str:
-    """生成 Inno Setup 6 安装脚本。
-
-    关键技巧：Source 引用 ASCII 文件名（Wine 兼容），
-    DestName 还原中文名（安装后显示正确）。
-    OutputBaseFilename 也使用 ASCII 避免 Wine 乱码。
-    """
-    return f"""; Inno Setup Script — 自动生成 (v{APP_VERSION})
+    """生成 Inno Setup 6 安装脚本（全部英文文件名，Wine/CI 友好）。"""
+    return f"""; Inno Setup Script — auto-generated v{APP_VERSION}
 [Setup]
 AppName={APP_NAME}
 AppVersion={APP_VERSION}
@@ -289,7 +276,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 UninstallDisplayName={APP_NAME}
 OutputDir=./
-OutputBaseFilename=InvoiceArchive_Setup
+OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
 
 [Files]
 Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{EXE_NAME}"
