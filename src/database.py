@@ -10,6 +10,21 @@ from logger import getLogger
 
 log = getLogger(__name__)
 
+# ── Unicode 清洗 ─────────────────────────────
+
+# pdfplumber 偶发产生孤立代理字符（U+D800–U+DFFF），它们不是合法 Unicode，
+# 也无法被 UTF-8 编码。已入库的老数据可能残留此类字符，必须在加载时清洗。
+_SURROGATE_TABLE = {c: ord('�') for c in range(0xd800, 0xe000)}
+
+
+def sanitize_str(text: str | None) -> str:
+    """清洗字符串中的非法代理字符，替换为 �。None 返回空字符串。"""
+    if text is None:
+        return ""
+    if not text:
+        return text
+    return text.translate(_SURROGATE_TABLE)
+
 _DDL = """\
 CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +101,45 @@ class Database:
             conn.executescript(_DDL)
             conn.commit()
         self._migrate_tags_json_to_table()
+        self._sanitize_existing_data()
+
+    def _sanitize_existing_data(self):
+        """清洗数据库中已存在的孤立代理字符（pdfplumber 老数据残留）。
+
+        扫描所有文本列，将 U+D800–U+DFFF 范围的非法字符替换为 U+FFFD �。
+        幂等操作：已干净的数据不会有任何改动。
+        """
+        text_cols = [
+            "file", "pdf_path", "company", "invoice_type",
+            "buyer_name", "buyer_tax_id", "seller_name",
+            "amount", "tax_rate", "tax_amount", "total",
+            "invoice_no", "invoice_date", "remark",
+            "error", "tags", "attachments",
+        ]
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                cleaned = 0
+                for col in text_cols:
+                    # 查找包含孤立代理字符（U+D800–U+DFFF）的记录
+                    # SQLite 的 char() 接受 Unicode 码点
+                    rows = conn.execute(
+                        f"SELECT id, {col} FROM invoices "
+                        f"WHERE {col} LIKE '%' || char(0xD800) || '%'"
+                        f"  OR {col} LIKE '%' || char(0xDFFF) || '%'"
+                    ).fetchall()
+                    for rid, val in rows:
+                        if val:
+                            new_val = sanitize_str(val)
+                            if new_val != val:
+                                conn.execute(
+                                    f"UPDATE invoices SET {col}=? WHERE id=?",
+                                    (new_val, rid))
+                                cleaned += 1
+                if cleaned:
+                    conn.commit()
+                    log.info("已清洗 %d 处代理字符残留", cleaned)
+        except sqlite3.Error as e:
+            log.warning("数据清洗失败（不影响主流程）: %s", e)
 
     def _migrate_tags_json_to_table(self):
         """将 invoices.tags JSON 列迁移到 invoice_tags 表（幂等，只执行一次）"""
@@ -266,25 +320,26 @@ class Database:
             for p in self._parse_json_list(row[col]):
                 if p and p not in atts:
                     atts.append(p)
+        # 清洗所有文本字段中的孤立代理字符（pdfplumber 老数据残留）
         return Invoice(
-            file=row["file"] or "",
-            pdf_path=row["pdf_path"] or "",
-            company=row["company"] or "",
-            invoice_type=row["invoice_type"] or "",
-            buyer_name=row["buyer_name"] or "",
-            buyer_tax_id=row["buyer_tax_id"] or "",
-            seller_name=row["seller_name"] or "",
-            amount=row["amount"] or "",
-            tax_rate=row["tax_rate"] or "",
-            tax_amount=row["tax_amount"] or "",
-            total=row["total"] or "",
-            invoice_no=row["invoice_no"] or "",
-            invoice_date=row["invoice_date"] or "",
+            file=sanitize_str(row["file"]),
+            pdf_path=sanitize_str(row["pdf_path"]),
+            company=sanitize_str(row["company"]),
+            invoice_type=sanitize_str(row["invoice_type"]),
+            buyer_name=sanitize_str(row["buyer_name"]),
+            buyer_tax_id=sanitize_str(row["buyer_tax_id"]),
+            seller_name=sanitize_str(row["seller_name"]),
+            amount=sanitize_str(row["amount"]),
+            tax_rate=sanitize_str(row["tax_rate"]),
+            tax_amount=sanitize_str(row["tax_amount"]),
+            total=sanitize_str(row["total"]),
+            invoice_no=sanitize_str(row["invoice_no"]),
+            invoice_date=sanitize_str(row["invoice_date"]),
             is_red=bool(row["is_red"]),
             tags=self._parse_json_dict(row["tags"]),
-            attachments=atts,
-            remark=row["remark"] or "",
-            error=row["error"] or "",
+            attachments=[sanitize_str(p) for p in atts],
+            remark=sanitize_str(row["remark"]),
+            error=sanitize_str(row["error"]),
         )
 
     @staticmethod
@@ -323,13 +378,19 @@ class Database:
     def _insert_rows(self, conn, invoices: list[Invoice]):
         """在已有事务中批量插入发票（含 tags），使用 executemany"""
         rows = [
-            (inv.file, inv.pdf_path, inv.company, inv.invoice_type,
-             inv.buyer_name, inv.buyer_tax_id, inv.seller_name,
-             inv.amount, inv.tax_rate, inv.tax_amount, inv.total,
-             inv.invoice_no, inv.invoice_date, int(inv.is_red),
-             json.dumps(inv.tags, ensure_ascii=False),
-             json.dumps(inv.attachments, ensure_ascii=False),
-             inv.remark, inv.error)
+            (sanitize_str(inv.file), sanitize_str(inv.pdf_path),
+             sanitize_str(inv.company), sanitize_str(inv.invoice_type),
+             sanitize_str(inv.buyer_name), sanitize_str(inv.buyer_tax_id),
+             sanitize_str(inv.seller_name),
+             sanitize_str(inv.amount), sanitize_str(inv.tax_rate),
+             sanitize_str(inv.tax_amount), sanitize_str(inv.total),
+             sanitize_str(inv.invoice_no), sanitize_str(inv.invoice_date),
+             int(inv.is_red),
+             json.dumps({k: sanitize_str(v) for k, v in (inv.tags or {}).items()},
+                        ensure_ascii=False),
+             json.dumps([sanitize_str(p) for p in (inv.attachments or [])],
+                        ensure_ascii=False),
+             sanitize_str(inv.remark), sanitize_str(inv.error))
             for inv in invoices
         ]
         conn.executemany("""
@@ -359,8 +420,33 @@ class Database:
 
     # ── 增量写操作（避免 DELETE ALL + INSERT ALL）──
 
+    @staticmethod
+    def _sanitize_invoice(inv: Invoice) -> Invoice:
+        """清洗 Invoice 所有文本字段中的孤立代理字符，返回新实例。"""
+        inv.file = sanitize_str(inv.file)
+        inv.pdf_path = sanitize_str(inv.pdf_path)
+        inv.company = sanitize_str(inv.company)
+        inv.invoice_type = sanitize_str(inv.invoice_type)
+        inv.buyer_name = sanitize_str(inv.buyer_name)
+        inv.buyer_tax_id = sanitize_str(inv.buyer_tax_id)
+        inv.seller_name = sanitize_str(inv.seller_name)
+        inv.amount = sanitize_str(inv.amount)
+        inv.tax_rate = sanitize_str(inv.tax_rate)
+        inv.tax_amount = sanitize_str(inv.tax_amount)
+        inv.total = sanitize_str(inv.total)
+        inv.invoice_no = sanitize_str(inv.invoice_no)
+        inv.invoice_date = sanitize_str(inv.invoice_date)
+        inv.remark = sanitize_str(inv.remark)
+        inv.error = sanitize_str(inv.error)
+        if inv.tags:
+            inv.tags = {k: sanitize_str(v) for k, v in inv.tags.items()}
+        if inv.attachments:
+            inv.attachments = [sanitize_str(p) for p in inv.attachments]
+        return inv
+
     def insert_one(self, inv: Invoice) -> int:
         """插入单条发票到数据库，返回新记录的 id。不删已有数据"""
+        self._sanitize_invoice(inv)
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("PRAGMA foreign_keys=ON")
@@ -406,6 +492,7 @@ class Database:
 
     def update_one(self, inv: Invoice) -> bool:
         """按 invoice_no 更新单条发票（含 tags）。未找到返回 False"""
+        self._sanitize_invoice(inv)
         try:
             with sqlite3.connect(self._db_path) as conn:
                 conn.execute("PRAGMA foreign_keys=ON")
