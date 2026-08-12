@@ -31,9 +31,9 @@ def _read_version():
                 return m.group(1)
     return "0.0.0"
 
-APP_NAME = "发票归档"
+APP_NAME = "lan-invoice"
 APP_VERSION = _read_version()
-APP_DIR_NAME = "发票归档"
+APP_DIR_NAME = "lan-invoice"
 
 # 文件名：统一英文避免 Wine / Git Bash / CI 中文编码问题
 VER_TAG = APP_VERSION.replace(".", "_")
@@ -267,14 +267,14 @@ def _generate_iss(source_dir: Path) -> str:
     """生成 Inno Setup 6 安装脚本（全部英文文件名，Wine/CI 友好）。"""
     return f"""; Inno Setup Script — auto-generated v{APP_VERSION}
 [Setup]
-AppName={APP_NAME}
+AppName=lan-invoice
 AppVersion={APP_VERSION}
 AppPublisher=GUYI33
-DefaultDirName={{pf}}\\{APP_DIR_NAME}
-DefaultGroupName={APP_DIR_NAME}
+DefaultDirName={{pf}}\\lan-invoice
+DefaultGroupName=lan-invoice
 Compression=lzma2/ultra64
 SolidCompression=yes
-UninstallDisplayName={APP_NAME}
+UninstallDisplayName=lan-invoice
 OutputDir=./
 OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
 
@@ -282,11 +282,11 @@ OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
 Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{EXE_NAME}"
 
 [Icons]
-Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
-Name: "{{commondesktop}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{group}}\\lan-invoice"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{commondesktop}}\\lan-invoice"; Filename: "{{app}}\\{EXE_NAME}"
 
 [Run]
-Filename: "{{app}}\\{EXE_NAME}"; Description: "启动 {APP_NAME}"; \
+Filename: "{{app}}\\{EXE_NAME}"; Description: "Launch lan-invoice"; \
 Flags: nowait postinstall
 """
 
