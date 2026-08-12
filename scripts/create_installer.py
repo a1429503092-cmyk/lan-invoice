@@ -31,9 +31,10 @@ def _read_version():
                 return m.group(1)
     return "0.0.0"
 
-APP_NAME = "lan-invoice"
+# 安装程序界面显示名（可以用中文，Inno Setup 支持 UTF-8 with BOM）
+APP_NAME = "发票归档"
 APP_VERSION = _read_version()
-APP_DIR_NAME = "lan-invoice"
+APP_DIR_NAME = "发票归档"
 
 # 文件名：统一英文避免 Wine / Git Bash / CI 中文编码问题
 VER_TAG = APP_VERSION.replace(".", "_")
@@ -208,7 +209,8 @@ def build_with_docker_innosetup(source_dir: Path) -> bool:
     # 生成 .iss 脚本（引用 ASCII 安全文件名，输出中文文件名）
     iss_content = _generate_iss(source_dir)
     iss_path = source_dir / "setup.iss"
-    iss_path.write_text(iss_content, encoding="utf-8")
+    # UTF-8 with BOM，Inno Setup 6 才能正确识别中文
+    iss_path.write_text(iss_content, encoding="utf-8-sig")
 
     # 映射路径：Wine 下 Z:\work → 宿主 source_dir
     src_abs = str(source_dir.resolve()).replace("\\", "/")
@@ -266,15 +268,16 @@ def build_with_docker_innosetup(source_dir: Path) -> bool:
 def _generate_iss(source_dir: Path) -> str:
     """生成 Inno Setup 6 安装脚本（全部英文文件名，Wine/CI 友好）。"""
     return f"""; Inno Setup Script — auto-generated v{APP_VERSION}
+; 界面文字用中文，文件名/路径用英文（Docker/Wine 中文文件名兼容问题）
 [Setup]
-AppName=lan-invoice
+AppName={APP_NAME}
 AppVersion={APP_VERSION}
 AppPublisher=GUYI33
 DefaultDirName={{pf}}\\lan-invoice
-DefaultGroupName=lan-invoice
+DefaultGroupName={APP_DIR_NAME}
 Compression=lzma2/ultra64
 SolidCompression=yes
-UninstallDisplayName=lan-invoice
+UninstallDisplayName={APP_NAME}
 OutputDir=./
 OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
 
@@ -282,11 +285,11 @@ OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
 Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{EXE_NAME}"
 
 [Icons]
-Name: "{{group}}\\lan-invoice"; Filename: "{{app}}\\{EXE_NAME}"
-Name: "{{commondesktop}}\\lan-invoice"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{commondesktop}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
 
 [Run]
-Filename: "{{app}}\\{EXE_NAME}"; Description: "Launch lan-invoice"; \
+Filename: "{{app}}\\{EXE_NAME}"; Description: "启动 {APP_NAME}"; \
 Flags: nowait postinstall
 """
 

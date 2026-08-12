@@ -16,12 +16,12 @@ VSVersionInfo(
       StringTable(
         u'080404b0',
         [StringStruct(u'CompanyName', u'GUYI33'),
-         StringStruct(u'FileDescription', u'lan-invoice - e-invoice PDF batch recognition and archive'),
+         StringStruct(u'FileDescription', u'lan-invoice - 电子发票 PDF 批量识别与归档'),
          StringStruct(u'FileVersion', u'5.6.0'),
          StringStruct(u'InternalName', u'lan-invoice'),
          StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
          StringStruct(u'OriginalFilename', u'lan-invoice_v5.6.0.exe'),
-         StringStruct(u'ProductName', u'lan-invoice'),
+         StringStruct(u'ProductName', u'发票归档'),
          StringStruct(u'ProductVersion', u'5.6.0')])
     ]),
     VarFileInfo([VarStruct(u'Translation', [0x0804, 0x04b0])])
