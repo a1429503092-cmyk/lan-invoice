@@ -11,6 +11,7 @@ from database import Database
 from backup import BackupService
 from config_manager import ConfigManager
 from services.invoice_service import InvoiceService, VALID_SORT_FIELDS
+from mcp_tasks import TaskManager, get_task_manager
 from version import APP_VERSION
 
 if sys.platform == "win32":
@@ -60,6 +61,11 @@ class McpServer:
             "delete_invoice": self._delete,
             "check_update": self._check_update,
         }
+
+        # 异步任务管理（io.modelcontextprotocol/tasks 扩展）
+        self._tasks = get_task_manager()
+        # 支持异步执行的方法名集合（tools/call 检测到后返回 CreateTaskResult）
+        self._async_methods: set[str] = {"import_invoices_batch"}
 
     def _init_data_dir(self, config_dir: str) -> str:
         cfg_file = os.path.join(config_dir, "config.json")
@@ -119,13 +125,19 @@ class McpServer:
             return self._ok(rid, {"tools": self._tool_defs()},
                            ttl_ms=_TOOL_LIST_TTL_MS)
         if method == "tools/call":
-            return self._ok(rid, self._call_tool(req.get("params", {})))
+            return self._handle_tools_call(rid, req)
         if method == "resources/list":
             return self._ok(rid, {"resources": self._resource_defs()},
                            ttl_ms=_DEFAULT_TTL_MS)
         if method == "resources/read":
             return self._ok(rid, self._read_resource(req.get("params", {})),
                            ttl_ms=_DEFAULT_TTL_MS)
+
+        # ── Tasks 扩展（2026-07-28） ──
+        if method == "tasks/get":
+            return self._handle_tasks_get(rid, req.get("params", {}))
+        if method == "tasks/cancel":
+            return self._handle_tasks_cancel(rid, req.get("params", {}))
 
         # ── 已废弃方法（向后兼容） ──
         if method == "ping":
@@ -158,6 +170,101 @@ class McpServer:
                 },
             },
         }
+
+    # ── Tasks 扩展 ──────────────────────────
+
+    def _client_supports_tasks(self, meta: dict) -> bool:
+        """检查请求 _meta 中是否声明了 Tasks 扩展能力。"""
+        caps = meta.get(META_CLIENT_CAPABILITIES, {})
+        extensions = caps.get("extensions", {})
+        return "io.modelcontextprotocol/tasks" in extensions
+
+    def _handle_tools_call(self, rid, req: dict):
+        """处理 tools/call，对支持异步的方法检查客户端能力并返回 Task。"""
+        params = req.get("params", {})
+        name = params.get("name", "")
+        meta = req.get("_meta", {})
+
+        # 异步方法 + 客户端支持 Tasks → 返回 CreateTaskResult
+        if name in self._async_methods and self._client_supports_tasks(meta):
+            task_id = self._tasks.submit(
+                name=name,
+                fn=self._run_tool_async,
+                tool_name=name,
+                args=params.get("arguments") or {},
+            )
+            return {
+                "jsonrpc": "2.0",
+                "id": rid,
+                "result": {
+                    "resultType": "task",
+                    "taskId": task_id,
+                    "status": "working",
+                    "ttlMs": 3_600_000,
+                    "pollIntervalMs": 2000,
+                },
+                "_meta": {
+                    META_SERVER_INFO: {
+                        "name": "invoice-tool",
+                        "version": APP_VERSION,
+                    },
+                },
+            }
+
+        # 同步执行（兼容不支持 Tasks 的客户端）
+        result = self._call_tool(params)
+        return self._ok(rid, result)
+
+    def _run_tool_async(self, task, tool_name: str, args: dict):
+        """在线程池中执行工具调用，通过 task 汇报进度。"""
+        task.set_progress(0, f"启动 {tool_name}...")
+        fn = self._routes.get(tool_name)
+        if not fn:
+            return {"error": f"Unknown tool: {tool_name}"}
+        # import_invoices_batch 接受 progress_cb 参数，其他方法忽略
+        if tool_name == "import_invoices_batch":
+            return fn(args, progress_cb=task.set_progress)
+        return fn(args)
+
+    def _handle_tasks_get(self, rid, params: dict):
+        """tasks/get — 轮询任务状态。"""
+        task_id = params.get("taskId", "")
+        if not task_id:
+            return self._err(rid, -32602, "缺少必填参数: taskId")
+        task_dict = self._tasks.get(task_id)
+        if task_dict is None:
+            return self._err(rid, -32602, f"任务不存在: {task_id}")
+        resp = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "result": task_dict,
+            "_meta": {
+                META_SERVER_INFO: {
+                    "name": "invoice-tool",
+                    "version": APP_VERSION,
+                },
+            },
+        }
+        return resp
+
+    def _handle_tasks_cancel(self, rid, params: dict):
+        """tasks/cancel — 请求取消任务。"""
+        task_id = params.get("taskId", "")
+        if not task_id:
+            return self._err(rid, -32602, "缺少必填参数: taskId")
+        cancelled = self._tasks.cancel(task_id)
+        resp = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "result": {"cancelled": cancelled},
+            "_meta": {
+                META_SERVER_INFO: {
+                    "name": "invoice-tool",
+                    "version": APP_VERSION,
+                },
+            },
+        }
+        return resp
 
     def _legacy_initialize(self, rid, params: dict):
         """向后兼容 2024-11-05 旧客户端 initialize"""
@@ -407,7 +514,7 @@ class McpServer:
         return self._svc.import_invoice(
             a.get("pdf_path", ""), a.get("tags"), a.get("remark"))
 
-    def _import_batch(self, a):
+    def _import_batch(self, a, progress_cb=None):
         paths = list(a.get("pdf_paths") or [])
         directory = a.get("directory", "")
         if directory:
@@ -421,6 +528,7 @@ class McpServer:
             tags=a.get("tags"),
             remark=a.get("remark"),
             parallel=a.get("parallel", 4),
+            progress_cb=progress_cb,
         )
 
     def _export(self, a):

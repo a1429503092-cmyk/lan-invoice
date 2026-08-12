@@ -199,15 +199,28 @@ class InvoiceService:
     def import_invoices_batch(self, pdf_paths: list[str],
                               tags: dict | None = None,
                               remark: str | None = None,
-                              parallel: int = 4) -> dict:
+                              parallel: int = 4,
+                              progress_cb=None) -> dict:
         """批量导入多个 PDF——并行解析 + 单事务写入 + 一次性备份。
-        比逐条 import_invoice 快 10-100 倍。"""
+        比逐条 import_invoice 快 10-100 倍。
+
+        progress_cb(pct, message) — 可选的进度回调（MCP Tasks 使用）。
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from invoice_parser import parse_invoice_pdf
         from utils import copy_file_to_dir
 
+        def _progress(pct, msg=""):
+            if progress_cb:
+                try:
+                    progress_cb(pct, msg)
+                except Exception:
+                    pass
+
         if not pdf_paths:
             return {"error": "pdf_paths 不能为空"}
+
+        _progress(5, f"扫描 {len(pdf_paths)} 个文件...")
 
         # 收集所有存在的 PDF 路径
         valid_paths = [p for p in pdf_paths if p and os.path.isfile(p)]
@@ -230,6 +243,8 @@ class InvoiceService:
         duplicates: list[dict] = []
 
         # ── 阶段 1：并行解析 ──
+        _progress(10, f"并行解析 {len(valid_paths)} 个 PDF ({min(parallel, len(valid_paths))} 线程)...")
+
         def parse_one(path):
             r = parse_invoice_pdf(path)
             return path, r
@@ -276,6 +291,7 @@ class InvoiceService:
                     existing_nos.add(inv.invoice_no)  # 批次内去重
 
         # ── 阶段 2：文件复制 ──
+        _progress(50, f"复制 {len(parsed)} 个 PDF 到数据目录...")
         to_insert: list[Invoice] = []
         copy_errors: list[dict] = []
         for src_path, inv in parsed:
@@ -290,6 +306,7 @@ class InvoiceService:
             to_insert.append(inv)
 
         # ── 阶段 3：单事务批量写入 ──
+        _progress(70, f"写入 {len(to_insert)} 条记录到数据库...")
         inserted = 0
         if to_insert:
             try:
@@ -298,6 +315,7 @@ class InvoiceService:
                 return {"error": f"批量写入失败: {e}", "inserted": 0}
 
         # ── 阶段 4：一次性备份 ──
+        _progress(90, "创建备份...")
         self._post_write_batch()
 
         return {
