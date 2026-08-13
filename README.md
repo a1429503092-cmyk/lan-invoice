@@ -1,5 +1,7 @@
 # 发票归档
 
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 电子发票 PDF 批量识别与归档桌面应用。Python 3.12+ / PyQt5 / SQLite。
 
 ## 快速开始
@@ -145,3 +147,7 @@ GUI (invoice_tool.py) ──┐
 MCP (mcp_server.py)    ──┼──> InvoiceService ──> Database + BackupService + ConfigManager
 HTTP (http_server.py)  ──┘       业务层统一         存储抽象（InvoiceStorage Protocol）
 ```
+
+## 开源协议
+
+[MIT License](LICENSE) — 可自由使用、修改、商用，需保留版权声明。
