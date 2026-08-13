@@ -1,0 +1,95 @@
+# 发票归档 — 自动打包 workflow
+# 触发：推送 v* 标签 或 手动触发
+# 产出：便携版 EXE + Inno Setup 安装包（GitHub Actions artifacts）
+#
+# 用法：
+#   git push origin v5.6.1     # 自动触发
+#   或 GitHub 页面 → Actions → build → Run workflow
+#
+# 注：PyInstaller 不能交叉编译，Windows EXE 必须在 Windows 环境打包，
+# 因此使用 windows-latest runner（原生 Windows，无需 Wine）。
+
+name: build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Install UPX
+        run: choco install upx -y --no-progress
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup -y --no-progress
+
+      - name: Build EXE (PyInstaller + UPX)
+        run: |
+          pyinstaller "发票归档.spec" --clean --noconfirm
+        shell: pwsh
+
+      - name: Prepare release artifacts
+        shell: pwsh
+        run: |
+          $ver = (Get-Content src/version.py | Select-String 'APP_VERSION = "([^"]+)"').Matches[0].Groups[1].Value
+          Write-Host "Version: $ver"
+          Copy-Item "dist/lan-invoice.exe" "dist/lan-invoice_$ver.exe"
+          # 生成 Inno Setup 脚本（自动版本号）
+          $ascii = "lan_invoice_" + ($ver -replace '\.', '_') + ".exe"
+          Copy-Item "dist/lan-invoice_$ver.exe" "dist/$ascii"
+          $iss = @"
+; Inno Setup Script — auto-generated v$ver
+[Setup]
+AppName=发票归档
+AppVersion=$ver
+AppPublisher=GUYI33
+DefaultDirName={pf}\lan-invoice
+DefaultGroupName=发票归档
+Compression=lzma2/ultra64
+SolidCompression=yes
+UninstallDisplayName=发票归档
+OutputDir=./
+OutputBaseFilename=lan-invoice_${ver}_setup
+
+[Files]
+Source: "$ascii"; DestDir: "{app}"; DestName: "lan-invoice_$ver.exe"
+
+[Icons]
+Name: "{group}\发票归档"; Filename: "{app}\lan-invoice_$ver.exe"
+Name: "{commondesktop}\发票归档"; Filename: "{app}\lan-invoice_$ver.exe"
+
+[Run]
+Filename: "{app}\lan-invoice_$ver.exe"; Description: "启动 发票归档"; Flags: nowait postinstall
+"@
+          Set-Content -Path "dist/setup.iss" -Value $iss -Encoding UTF8
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "dist/setup.iss"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-invoice-build
+          path: |
+            dist/lan-invoice_*.exe
+          retention-days: 30

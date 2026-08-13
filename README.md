@@ -124,14 +124,35 @@ uv run python src/invoice_tool.py --http --port 8080
 
 ## 发布新版本
 
+### 方式一：GitHub Actions（推荐，无需本地环境）
+
+推送 `v*` 标签自动触发 `.github/workflows/build.yml`：
+
 ```bash
-export GITEE_TOKEN=你的令牌
-uv run python scripts/release.py
+git push origin v5.6.1
 ```
 
-脚本自动：递增版本号 → 构建 EXE → 打 tag 并推送 → 创建 Gitee Release 并上传 EXE。
+windows-latest runner 原生打包：PyInstaller（含 UPX 压缩）→ Inno Setup 安装包 → artifacts 下载。
 
-打包优化：PyInstaller 排除 17 个未使用的 Qt 模块（QtQuick/Qml/Multimedia 等），启用 `optimize=2` + `strip=True` + UPX 压缩。
+> 注：PyInstaller 不支持交叉编译，Windows EXE 必须在 Windows 环境打包。
+
+### 方式二：Docker 容器（本地，不依赖本机配置）
+
+```bash
+docker build -t lan-invoice-builder -f Dockerfile.build .
+docker run --rm -v $PWD:/src -v $PWD/dist:/out lan-invoice-builder
+```
+
+Wine 交叉编译：Windows Python + PyInstaller + UPX + Inno Setup，产物输出到 `dist/`。
+
+### 方式三：本机一键打包（Windows）
+
+```bash
+build.bat        # Windows
+bash build.sh    # Git Bash / macOS / Linux
+```
+
+打包优化：PyInstaller 排除 17 个未使用的 Qt 模块（QtQuick/Qml/Multimedia 等），启用 `optimize=2` + UPX 压缩（安装 UPX 后自动生效，体积约 105MB → 84MB）。
 
 ## 数据存储
 

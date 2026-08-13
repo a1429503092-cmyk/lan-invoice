@@ -1,0 +1,47 @@
+# 发票归档 — 完整打包链容器镜像（PyInstaller + UPX + Inno Setup）
+#
+# 原理：PyInstaller 不支持原生交叉编译，Linux 下打 Windows EXE
+# 需用 Wine 运行 Windows 版 Python + PyInstaller。
+#
+# 构建：docker build -t lan-invoice-builder -f Dockerfile.build .
+# 打包：docker run --rm -v $PWD:/src -v $PWD/dist:/out lan-invoice-builder
+#       镜像内自动执行 scripts/build_all.sh，产物输出到 dist/
+#
+# 备选方案（推荐）：GitHub Actions workflow (.github/workflows/build.yml)
+# 用 windows-latest runner 原生打包，无需 Docker。
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV WINEPREFIX=/root/.wine
+ENV WINEDEBUG=-all
+
+# ── 基础工具 + Wine + UPX ──
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget xvfb wine64 wine32 unzip ca-certificates \
+    && apt-get install -y upx \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Windows Python 3.12（Wine 下运行）──
+RUN wget -q https://www.python.org/ftp/python/3.12.6/python-3.12.6-amd64.exe \
+    && xvfb-run wine python-3.12.6-amd64.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 \
+    && rm python-3.12.6-amd64.exe
+
+# ── Windows pip + 依赖（PyInstaller 需在 Windows 环境安装）──
+COPY requirements.txt /tmp/requirements.txt
+RUN xvfb-run wine "C:\\Python312\\python.exe" -m pip install --no-cache-dir -r /tmp/requirements.txt \
+    && xvfb-run wine "C:\\Python312\\python.exe" -m pip install --no-cache-dir pyinstaller pillow
+
+# ── Windows 版 UPX（PyInstaller 在 Wine 下找 upx.exe）──
+RUN wget -q https://github.com/upx/upx/releases/download/v5.0.0/upx-5.0.0-win64.zip \
+    && unzip upx-5.0.0-win64.zip \
+    && cp upx-5.0.0-win64/upx.exe /root/.wine/drive_c/Python312/ \
+    && rm -rf upx-5.0.0-win64*
+
+# ── Inno Setup 6（Wine 下）──
+RUN wget -q https://files.jrsoftware.org/is/6/innosetup-6.4.1.exe \
+    && xvfb-run wine innosetup-6.4.1.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART \
+    && rm innosetup-6.4.1.exe
+
+WORKDIR /src
+CMD ["bash", "scripts/build_all.sh"]
