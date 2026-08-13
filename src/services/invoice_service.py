@@ -362,39 +362,10 @@ class InvoiceService:
     # ── 统计摘要 ──────────────────────────────
 
     def get_summary(self, **filters) -> dict:
-        from utils import safe_float
+        """统计摘要：SQL 级聚合（COUNT + SUM + GROUP BY），内存 O(1)。"""
         year = filters.get("year")
         month = filters.get("month")
-
-        # SQL 级聚合（不再 load 全量）
-        if year or month:
-            total, invs, _ = self._db.search(year=year, month=month,
-                                             limit=999999, offset=0)
-            types = {}
-            for inv in invs:
-                t = inv.invoice_type or "未知"
-                types[t] = types.get(t, 0) + 1
-            return {
-                "count": total,
-                "total_amount": sum(safe_float(i.amount) for i in invs) or 0.0,
-                "total_tax": sum(safe_float(i.tax_amount) for i in invs) or 0.0,
-                "total_with_tax": sum(safe_float(i.total) for i in invs) or 0.0,
-                "by_type": types,
-            }
-        else:
-            # 无筛选时用全量统计（一次 DB 查询即可）
-            invs = self._db.load()
-            types = {}
-            for inv in invs:
-                t = inv.invoice_type or "未知"
-                types[t] = types.get(t, 0) + 1
-            return {
-                "count": len(invs),
-                "total_amount": sum(safe_float(i.amount) for i in invs) or 0.0,
-                "total_tax": sum(safe_float(i.tax_amount) for i in invs) or 0.0,
-                "total_with_tax": sum(safe_float(i.total) for i in invs) or 0.0,
-                "by_type": types,
-            }
+        return self._db.aggregate(year=year, month=month)
 
     # ── 标签管理 ──────────────────────────────
 

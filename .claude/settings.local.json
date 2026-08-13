@@ -1,4 +1,7 @@
 {
+  "disabledMcpjsonServers": [
+    "invoice"
+  ],
   "skillOverrides": {
     "wechatpay-basic-payment": "name-only",
     "wechatpay-deduction-service": "name-only",
@@ -6,7 +9,9 @@
     "wechatpay-payscore": "name-only",
     "wechatpay-product-coupon": "name-only"
   },
-  "disabledMcpjsonServers": [
-    "invoice"
-  ]
+  "permissions": {
+    "allow": [
+      "Bash(uv run *)"
+    ]
+  }
 }

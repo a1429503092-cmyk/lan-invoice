@@ -100,32 +100,74 @@ class BackupService:
         for d in dirs:
             sub = os.path.join(d, f"data_{ts}")
             try:
+                # 先找上一份快照（必须在本目录创建之前，否则会找到自己）
+                prev = self._latest_backup_dir(d)
                 os.makedirs(sub, exist_ok=True)
-                # 复制整个数据目录（含 DB、PDF 发票、附件等所有文件）
-                self._copy_tree(data_dir, sub)
+                # 增量复制：未变更文件硬链接/跳过，只复制新增或变更的文件
+                self._copy_tree(data_dir, sub, prev)
                 count += 1
             except OSError as e:
                 log.warning("备份失败: %s → %s | %s", data_dir, sub, e)
         if count > 0:
-            log.info("备份完成: %d 份 (含完整数据目录)", count)
+            log.info("备份完成: %d 份 (增量)", count)
         return count
 
     @staticmethod
-    def _copy_tree(src: str, dst: str):
-        """递归复制目录树，跳过 WAL/SHM 临时文件"""
+    def _latest_backup_dir(backup_root: str) -> str | None:
+        """返回备份根目录下最新的 data_TIMESTAMP 快照目录，无则 None"""
+        latest = None
+        try:
+            for name in os.listdir(backup_root):
+                if name.startswith("data_") and os.path.isdir(os.path.join(backup_root, name)):
+                    if latest is None or name > latest:
+                        latest = name
+        except OSError:
+            return None
+        return os.path.join(backup_root, latest) if latest else None
+
+    def _copy_tree(self, src: str, dst: str, prev_dir: str | None = None) -> int:
+        """增量复制目录树：未变更文件与上一快照对比后跳过/硬链接，返回复制数。
+
+        - 源文件 mtime+size 与 prev 快照相同 → 视为未变更
+          · 同卷：os.link 硬链接（零复制、秒级）
+          · 跨卷/失败：回退 shutil.copy2
+        - 变更或新增 → 正常复制
+        - 跳过 SQLite WAL/SHM 临时文件
+        """
+        copied = 0
         for entry in os.listdir(src):
             s = os.path.join(src, entry)
             d = os.path.join(dst, entry)
             if os.path.isdir(s):
                 os.makedirs(d, exist_ok=True)
-                BackupService._copy_tree(s, d)
+                prev_sub = os.path.join(prev_dir, entry) if prev_dir else None
+                copied += self._copy_tree(s, d, prev_sub)
             elif os.path.isfile(s):
                 # 跳过 SQLite WAL/SHM 临时文件
                 if entry.endswith(("-wal", "-shm")):
                     continue
-                # 同名文件存在则跳过（不覆盖）
-                if not os.path.exists(d):
-                    shutil.copy2(s, d)
+                if os.path.exists(d):
+                    continue
+                # 与上一快照同名文件对比 mtime+size
+                if prev_dir:
+                    prev_f = os.path.join(prev_dir, entry)
+                    if os.path.isfile(prev_f):
+                        try:
+                            ss = os.stat(s)
+                            ps = os.stat(prev_f)
+                            if ss.st_size == ps.st_size and ss.st_mtime == ps.st_mtime:
+                                # 未变更：优先硬链接（同卷零复制），失败回退复制
+                                try:
+                                    os.link(prev_f, d)
+                                    copied += 1
+                                    continue
+                                except OSError:
+                                    pass  # 跨卷或权限问题 → 走正常复制
+                        except OSError:
+                            pass
+                shutil.copy2(s, d)
+                copied += 1
+        return copied
 
     # ── 恢复 ──────────────────────────────────
 

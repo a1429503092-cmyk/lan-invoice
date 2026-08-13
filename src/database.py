@@ -403,10 +403,20 @@ class Database:
                 remark, error
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?)
         """, rows)
-        # 批量插入后，需要获取每个新插入的 id 来创建 tags
-        # 使用 last_insert_rowid + ROW_COUNT 回推，或分步处理
-        # 这里简化：tags 保留在 JSON 列中（兼容旧逻辑），invoice_tags 表可用于后续迁移
-        # 因为已通过 json.dumps 写入 tags JSON 列，前端的 _migrate_tags_json_to_table 会处理
+        # 批量插入后回推自增 id，写入 invoice_tags 表（与单条 insert_one 保持一致）
+        # last_insert_rowid 是最后一个自增 id，自增 id 连续 → 第一个 id = last - count + 1
+        first_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0] - len(invoices) + 1
+        tag_rows = []
+        for idx, inv in enumerate(invoices):
+            inv_id = first_id + idx
+            for name, value in (inv.tags or {}).items():
+                tag_rows.append((inv_id, name, str(value) if value else ""))
+        if tag_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO invoice_tags(invoice_id, name, value) "
+                "VALUES (?, ?, ?)",
+                tag_rows,
+            )
 
     def _ensure_tags_table(self, conn, inv_id: int, tags: dict):
         """为指定发票写入 invoice_tags 表"""
@@ -552,6 +562,51 @@ class Database:
                 return row[0] if row else 0
         except sqlite3.Error:
             return 0
+
+    def aggregate(self, *, year=None, month=None) -> dict:
+        """SQL 级统计聚合：总数 + 金额/税额/价税合计 + 类型分布。
+
+        相比 load 全量 + Python 求和，大数据量下内存 O(1)、速度快一个数量级。
+        """
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                where = []
+                params: list = []
+                if year is not None:
+                    where.append("invoice_date LIKE ?")
+                    params.append(f"{year}年%")
+                if month is not None:
+                    where.append("invoice_date LIKE ?")
+                    params.append(f"%年{month:02d}月%")
+                where_clause = " AND ".join(where) if where else "1=1"
+
+                row = conn.execute(
+                    f"SELECT COUNT(*), "
+                    f"SUM(CAST(amount AS REAL)), "
+                    f"SUM(CAST(tax_amount AS REAL)), "
+                    f"SUM(CAST(total AS REAL)) "
+                    f"FROM invoices WHERE {where_clause}",
+                    params).fetchone()
+
+                # 类型分布（按 invoice_type 分组）
+                types = {}
+                for t, cnt in conn.execute(
+                        f"SELECT invoice_type, COUNT(*) FROM invoices "
+                        f"WHERE {where_clause} GROUP BY invoice_type",
+                        params).fetchall():
+                    types[t or "未知"] = cnt
+
+                return {
+                    "count": row[0] or 0,
+                    "total_amount": row[1] or 0.0,
+                    "total_tax": row[2] or 0.0,
+                    "total_with_tax": row[3] or 0.0,
+                    "by_type": types,
+                }
+        except sqlite3.Error as e:
+            log.error("聚合统计失败: %s", e)
+            return {"count": 0, "total_amount": 0.0, "total_tax": 0.0,
+                    "total_with_tax": 0.0, "by_type": {}}
 
     # ── 查询 ──────────────────────────────────
 
