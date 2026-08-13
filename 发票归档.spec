@@ -33,7 +33,11 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # 注意：不要排除 PIL/Pillow——matplotlib 渲染中文字体时依赖它
+        # ⚠️ 排除教训（两次踩坑）：
+        #   - PIL/Pillow 不能排除——matplotlib 渲染中文字体需要
+        #   - PyQt5.QtSvg 不能排除——matplotlib.qt_compat 无条件导入它
+        #   - PyQt5.QtXml 不能排除——QtSvg 的 DLL 依赖 QtXml
+        # 只排除有明确证据不需要的模块。
         'tkinter', 'tcl',           # 不使用 tkinter
         'PyQt5.QtMultimedia',       # 不需要音频/视频
         'PyQt5.QtWebEngine',        # 不需要浏览器引擎
@@ -44,12 +48,11 @@ a = Analysis(
         'PyQt5.QtRemoteObjects',    # 不需要远程对象
         'PyQt5.QtSensors',          # 不需要传感器
         'PyQt5.QtSerialPort',       # 不需要串口
-        'PyQt5.QtSql',              # 不需要 Qt SQL
-        'PyQt5.QtSvg',              # 不需要 SVG
         'PyQt5.QtTest',             # 不需要测试模块
         'PyQt5.QtWebChannel',       # 不需要 WebChannel
-        'PyQt5.QtXml',              # 不需要 XML 解析
         'PyQt5.QtXmlPatterns',      # 不需要 XSLT
+        # 注意：QtSql 保留排除——项目用 Python sqlite3，不走 Qt SQL
+        'PyQt5.QtSql',
     ],
     noarchive=False,
     optimize=2,
