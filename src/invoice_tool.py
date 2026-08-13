@@ -1292,18 +1292,48 @@ class InvoiceApp(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("发现新版本")
         msg.setText(f"检测到新版本 v{version}\n当前版本：v{APP_VERSION}")
-        btn_dl = msg.addButton("前往下载", QMessageBox.YesRole)
+        btn_portable = msg.addButton("下载便携版", QMessageBox.YesRole)
+        btn_installer = msg.addButton("下载安装包", QMessageBox.ActionRole)
         btn_skip = msg.addButton("跳过此版本", QMessageBox.NoRole)
         btn_cancel = msg.addButton("稍后提醒", QMessageBox.RejectRole)
-        msg.setDefaultButton(btn_dl)
+        msg.setDefaultButton(btn_portable)
         msg.exec_()
         clicked = msg.clickedButton()
-        if clicked == btn_dl:
-            QDesktopServices.openUrl(QUrl(url))
+        if clicked == btn_portable:
+            QDesktopServices.openUrl(QUrl(self._best_download_url(url, "portable")))
+        elif clicked == btn_installer:
+            QDesktopServices.openUrl(QUrl(self._best_download_url(url, "installer")))
         elif clicked == btn_skip:
             self._config.skipped_version = version
             self._config.save()
         self._manual_check_pending = False
+
+    @staticmethod
+    def _best_download_url(url: str, kind: str) -> str:
+        """返回指定类型（portable/installer）文件的直接下载链接。
+
+        处理两种情况：
+        1. 传入 release 页面 URL → 按已知命名规则拼出下载链接
+        2. 传入直接下载链接（assets[0]）→ 按 tag 和类型换文件名
+        """
+        # 情形 1：release 页面 URL
+        if "/releases/tag/" in url:
+            base, tag = url.rsplit("/releases/tag/", 1)
+            ver = tag.lstrip("v")  # v5.6.0 → 5.6.0（文件名不含 v）
+            fname = (f"lan-invoice_{ver}_setup.exe" if kind == "installer"
+                     else f"lan-invoice_{ver}.exe")
+            return f"{base}/releases/download/{tag}/{fname}"
+        # 情形 2：直接下载链接 → 解析出 tag 再拼目标文件名
+        if "/releases/download/" in url:
+            prefix, fname = url.rsplit("/", 1)
+            tag = prefix.rsplit("/", 1)[-1]
+            ver = tag.lstrip("v")
+            target = (f"lan-invoice_{ver}_setup.exe" if kind == "installer"
+                      else f"lan-invoice_{ver}.exe")
+            if fname == target:
+                return url  # 已是目标文件
+            return f"{prefix}/{target}"
+        return url  # 未知格式，原样返回
 
     def _on_check_finished(self, ok: bool, current: str, _url: str):
         if not self._manual_check_pending:

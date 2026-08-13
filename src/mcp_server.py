@@ -60,12 +60,13 @@ class McpServer:
             "add_attachment": self._attach,
             "delete_invoice": self._delete,
             "check_update": self._check_update,
+            "download_update": self._download_update,
         }
 
         # 异步任务管理（io.modelcontextprotocol/tasks 扩展）
         self._tasks = get_task_manager()
         # 支持异步执行的方法名集合（tools/call 检测到后返回 CreateTaskResult）
-        self._async_methods: set[str] = {"import_invoices_batch"}
+        self._async_methods: set[str] = {"import_invoices_batch", "download_update"}
 
     def _init_data_dir(self, config_dir: str) -> str:
         cfg_file = os.path.join(config_dir, "config.json")
@@ -453,11 +454,26 @@ class McpServer:
                  "required": ["invoice_no"],
              }},
             {"name": "check_update",
-             "description": "检查 Gitee 是否有新版本发布。",
+             "description": "检查 Gitee 是否有新版本发布，返回最新版本号和全部资产（便携版/安装包）的直接下载链接。",
              "inputSchema": {
                  "$schema": "https://json-schema.org/draft/2020-12/schema",
                  "type": "object",
                  "properties": {},
+             }},
+            {"name": "download_update",
+             "description": "下载新版本安装包到指定目录（支持进度，走异步任务）。先用 check_update 获取下载链接。",
+             "inputSchema": {
+                 "$schema": "https://json-schema.org/draft/2020-12/schema",
+                 "type": "object",
+                 "properties": {
+                     "url": {"type": "string",
+                             "description": "文件直接下载链接（来自 check_update 的 assets[].url）"},
+                     "output_dir": {"type": "string",
+                                    "description": "保存目录（默认桌面 Downloads 文件夹）"},
+                     "filename": {"type": "string",
+                                  "description": "可选：自定义保存文件名（默认用 URL 的文件名）"},
+                 },
+                 "required": ["url"],
              }},
         ]
 
@@ -551,7 +567,68 @@ class McpServer:
     def _delete(self, a):
         return self._svc.delete_invoice(a.get("invoice_no", ""))
 
+    def _download_update(self, a, progress_cb=None):
+        """下载新版本文件。支持进度回调（MCP Tasks 异步）。
+
+        流式下载到临时文件后原子重命名，避免下载中断留下半个文件。
+        """
+        import urllib.request
+        url = (a.get("url") or "").strip()
+        if not url:
+            return {"error": "缺少必填参数: url"}
+
+        # 默认保存到下载目录
+        output_dir = a.get("output_dir") or os.path.join(
+            os.path.expanduser("~"), "Downloads")
+        os.makedirs(output_dir, exist_ok=True)
+        filename = a.get("filename") or os.path.basename(url.split("?")[0])
+        if not filename:
+            return {"error": "无法从 URL 推断文件名，请指定 filename"}
+
+        dest = os.path.join(output_dir, filename)
+        tmp = dest + ".part"
+
+        def _progress(pct, msg=""):
+            if progress_cb:
+                try:
+                    progress_cb(pct, msg)
+                except Exception:
+                    pass
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "lan-invoice-updater"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                _progress(1, f"连接成功，文件大小 {total/1024/1024:.1f} MB")
+                downloaded = 0
+                with open(tmp, "wb") as f:
+                    while True:
+                        chunk = resp.read(1024 * 256)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = int(downloaded * 100 / total)
+                            _progress(pct, f"下载中 {downloaded/1024/1024:.1f}/{total/1024/1024:.1f} MB")
+            os.replace(tmp, dest)
+            _progress(100, f"下载完成")
+            return {"status": "ok", "path": dest,
+                    "size_mb": round(downloaded / 1024 / 1024, 1)}
+        except Exception as e:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+            return {"error": f"下载失败: {e}"}
+
     def _check_update(self, _args):
+        """检查更新：返回最新版本 + 全部资产的直接下载链接。
+
+        相比旧版只返回版本号，现在附带每个附件的文件名/大小/下载 URL，
+        AI 客户端可直接调用 download_update 下载，无需再解析 release 页面。
+        """
         try:
             import http.client
             conn = http.client.HTTPSConnection("gitee.com", timeout=10)
@@ -561,8 +638,9 @@ class McpServer:
             conn.close()
         except Exception:
             return {"status": "offline", "message": "无法连接网络"}
+
         tag = data.get("tag_name", "").lstrip("v")
-        latest = tag or "未知"
+        latest = tag or ""
         newer = False
         if tag:
             try:
@@ -570,4 +648,32 @@ class McpServer:
                          > tuple(int(x) for x in APP_VERSION.split(".")))
             except ValueError:
                 pass
-        return {"current": APP_VERSION, "latest": latest, "has_newer": newer}
+
+        # 解析全部资产（下载文件）
+        assets = []
+        for a in data.get("assets") or []:
+            name = a.get("name", "")
+            url = a.get("browser_download_url", "")
+            size = a.get("size", 0)
+            if name and url:
+                assets.append({
+                    "name": name,
+                    "size_mb": round(size / 1024 / 1024, 1),
+                    "url": url,
+                })
+
+        result = {
+            "status": "ok",
+            "current": APP_VERSION,
+            "latest": latest,
+            "has_newer": newer,
+            "release_page": f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{latest}" if latest else "",
+            "assets": assets,
+        }
+        # 便捷字段：便携版/安装包直达
+        for a in assets:
+            if a["name"].endswith(".exe") and "setup" not in a["name"]:
+                result["portable_download"] = a
+            elif "setup" in a["name"]:
+                result["installer_download"] = a
+        return result

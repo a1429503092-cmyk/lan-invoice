@@ -52,9 +52,9 @@ class TestMcpProtocol(unittest.TestCase):
         self.assertIn("resources", result["capabilities"])
         self.assertEqual(result["serverInfo"]["name"], "invoice-tool")
 
-    def test_tools_list_returns_10_tools(self):
+    def test_tools_list_returns_11_tools(self):
         r = self.s._handle({"id": 1, "method": "tools/list"})
-        self.assertEqual(len(r["result"]["tools"]), 10)
+        self.assertEqual(len(r["result"]["tools"]), 11)
 
     def test_tools_call_unknown_returns_isError(self):
         r = self.s._handle({"id": 1, "method": "tools/call",
