@@ -623,35 +623,53 @@ class McpServer:
                     pass
             return {"error": f"下载失败: {e}"}
 
+    @staticmethod
+    def _version_tuple(v: str) -> tuple:
+        """版本号转元组，用于比较，非法返回 (0,)"""
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except ValueError:
+            return (0,)
+
     def _check_update(self, _args):
         """检查更新：返回最新版本 + 全部资产的直接下载链接。
 
-        相比旧版只返回版本号，现在附带每个附件的文件名/大小/下载 URL，
-        AI 客户端可直接调用 download_update 下载，无需再解析 release 页面。
+        注意：不用 Gitee 的 /releases/latest——该接口按创建顺序返回列表第一个
+        release，删除旧版本后会导致检测错误。改用列表接口自行取版本号最大的。
         """
         try:
             import http.client
             conn = http.client.HTTPSConnection("gitee.com", timeout=10)
-            conn.request("GET", "/api/v5/repos/GUYI33/lan-invoice/releases/latest")
+            conn.request("GET",
+                         "/api/v5/repos/GUYI33/lan-invoice/releases?per_page=50")
             resp = conn.getresponse()
             data = json.loads(resp.read().decode())
             conn.close()
         except Exception:
             return {"status": "offline", "message": "无法连接网络"}
 
-        tag = data.get("tag_name", "").lstrip("v")
-        latest = tag or ""
-        newer = False
-        if tag:
-            try:
-                newer = (tuple(int(x) for x in tag.split("."))
-                         > tuple(int(x) for x in APP_VERSION.split(".")))
-            except ValueError:
-                pass
+        # 列表接口 → 取版本号最大的 release
+        if isinstance(data, list):
+            best = None
+            for r in data:
+                t = (r.get("tag_name") or "").lstrip("v")
+                if t and (best is None
+                          or self._version_tuple(t) > self._version_tuple(best[0])):
+                    best = (t, r)
+            if best is None:
+                return {"status": "ok", "current": APP_VERSION,
+                        "latest": "", "has_newer": False, "assets": []}
+            tag, latest = best
+        else:  # 兼容单个对象
+            tag = data.get("tag_name", "").lstrip("v")
+            latest = data
+
+        newer = (self._version_tuple(tag)
+                 > self._version_tuple(APP_VERSION)) if tag else False
 
         # 解析全部资产（下载文件）
         assets = []
-        for a in data.get("assets") or []:
+        for a in latest.get("assets") or []:
             name = a.get("name", "")
             url = a.get("browser_download_url", "")
             size = a.get("size", 0)
@@ -665,9 +683,9 @@ class McpServer:
         result = {
             "status": "ok",
             "current": APP_VERSION,
-            "latest": latest,
+            "latest": tag,
             "has_newer": newer,
-            "release_page": f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{latest}" if latest else "",
+            "release_page": f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}" if tag else "",
             "assets": assets,
         }
         # 便捷字段：便携版/安装包直达

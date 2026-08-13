@@ -5,7 +5,9 @@ from PyQt5.QtCore import QObject, QUrl
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 
-GITEE_API = "https://gitee.com/api/v5/repos/GUYI33/lan-invoice/releases/latest"
+# 注意：不用 /releases/latest——Gitee 的该接口按创建顺序返回"第一个"release
+# 而非最新版本，删除旧 release 后会导致检测错误。改用列表接口自行取最大版本号。
+GITEE_API = "https://gitee.com/api/v5/repos/GUYI33/lan-invoice/releases?per_page=50"
 
 
 class UpdateChecker(QObject):
@@ -33,12 +35,26 @@ class UpdateChecker(QObject):
         try:
             import json
             data = json.loads(bytes(reply.readAll()).decode("utf-8"))
-            tag = data.get("tag_name", "").lstrip("v")
+            # 列表接口返回 release 数组 → 自行选版本号最大的（最新）
+            if isinstance(data, list):
+                best = None
+                for r in data:
+                    tag = (r.get("tag_name") or "").lstrip("v")
+                    if not tag:
+                        continue
+                    if best is None or self._version_gt(tag, best[0]):
+                        best = (tag, r)
+                if best is None:
+                    return
+                tag, latest = best
+            else:  # 兼容单个 release 对象
+                tag = data.get("tag_name", "").lstrip("v")
+                latest = data
             if not tag:
                 return
             # 优先使用直接下载链接（assets），无附件时回退到 tag 页面
             download_url = ""
-            assets = data.get("assets") or []
+            assets = latest.get("assets") or []
             if assets:
                 download_url = assets[0].get("browser_download_url", "")
             if not download_url:
