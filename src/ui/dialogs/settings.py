@@ -11,9 +11,9 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QFrame, QListWidget, QCheckBox, QComboBox,
-    QSpinBox, QTabWidget, QWidget
+    QSpinBox, QTabWidget, QWidget, QPlainTextEdit
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QProcess, QTimer
 from logger import getLogger
 from version import APP_VERSION
 log = getLogger(__name__)
@@ -285,12 +285,16 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._section_title("MCP 服务"))
         mcp_hint = QLabel(
             "MCP（Model Context Protocol）是 AI 客户端的通用协议。\n"
-            "Claude Code、CodeBuddy、WorkBuddy、Cursor 等均支持。\n"
-            "复制下方 JSON 配置，让 AI 助手自行完成接入即可。"
+            "Claude Code、Cursor 等均支持。配置写入后重启 AI 客户端即可使用。"
         )
         mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         mcp_hint.setWordWrap(True)
         lay.addWidget(mcp_hint)
+
+        # 配置状态
+        self.lbl_mcp_status = QLabel()
+        self.lbl_mcp_status.setStyleSheet(f"font-size:11px;")
+        lay.addWidget(self.lbl_mcp_status)
 
         # JSON 配置（标准 MCP 格式，所有工具通用）
         entry = self._make_mcp_entry()
@@ -298,46 +302,161 @@ class SettingsDialog(QDialog):
             {"mcpServers": {"invoice": entry}},
             ensure_ascii=False, indent=2,
         )
-        self.edit_mcp_json = QLineEdit()
+        self.edit_mcp_json = QPlainTextEdit()
         self.edit_mcp_json.setReadOnly(True)
-        self.edit_mcp_json.setFixedHeight(32)
+        self.edit_mcp_json.setPlainText(self._mcp_json_text)
+        self.edit_mcp_json.setFixedHeight(140)
         self.edit_mcp_json.setStyleSheet(
-            f"background:{BG_ALT}; border:none; "
-            "font-family:Consolas,monospace; padding:2px 6px; font-size:11px;")
-        self.edit_mcp_json.setText(self._mcp_json_text)
-        mcp_row = QHBoxLayout()
-        mcp_row.setSpacing(8)
-        mcp_row.addWidget(self.edit_mcp_json, 1)
-        lay.addLayout(mcp_row)
+            f"background:{BG_ALT}; border:1px solid {BORDER_LIGHT}; "
+            "border-radius:4px; font-family:Consolas,monospace; "
+            "font-size:11px; padding:4px;")
+        lay.addWidget(self.edit_mcp_json)
 
-        mcp_btn_row = QHBoxLayout()
-        mcp_btn_row.setSpacing(8)
-        btn_copy = QPushButton("复制 JSON 配置")
-        btn_copy.setFixedHeight(32)
+        # 操作按钮行
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_write = QPushButton("写入配置文件")
+        btn_write.setFixedHeight(30)
+        btn_write.clicked.connect(self._write_mcp_config)
+        btn_row.addWidget(btn_write)
+        btn_test = QPushButton("测试连接")
+        btn_test.setFixedHeight(30)
+        btn_test.clicked.connect(self._test_mcp_connection)
+        btn_row.addWidget(btn_test)
+        btn_copy = QPushButton("复制 JSON")
+        btn_copy.setFixedHeight(30)
         btn_copy.clicked.connect(self._copy_mcp_json)
-        mcp_btn_row.addWidget(btn_copy)
-        mcp_btn_row.addStretch()
-        lay.addLayout(mcp_btn_row)
+        btn_row.addWidget(btn_copy)
+        btn_row.addStretch()
+        lay.addLayout(btn_row)
 
-        # Prompt 提示
-        prompt_hint = QLabel(
-            "在 AI 工具中发送以下 Prompt：\n\n"
-            "请帮我配置一个名为 invoice 的 MCP 服务器，使用以下 JSON：\n"
-            f"{self._mcp_json_text}\n\n"
-            "找到你使用的这款工具的 MCP 配置文件并写入，然后重启工具。"
-        )
-        prompt_hint.setStyleSheet(
-            f"font-size:10px; color:{TEXT_DIM}; background:{BG_ALT}; "
-            "padding:8px; border-radius:4px;")
-        prompt_hint.setWordWrap(True)
-        lay.addWidget(prompt_hint)
-        btn_copy_prompt = QPushButton("复制 Prompt")
-        btn_copy_prompt.setFixedHeight(28)
-        btn_copy_prompt.clicked.connect(self._copy_mcp_prompt)
-        lay.addWidget(btn_copy_prompt, alignment=Qt.AlignRight)
+        # 目标配置文件路径
+        target_label = QLabel(f"目标配置文件：{self._mcp_target_path()}")
+        target_label.setStyleSheet(f"font-size:10px; color:{TEXT_DIM};")
+        target_label.setWordWrap(True)
+        lay.addWidget(target_label)
 
         lay.addStretch()
+
+        self._refresh_mcp_status()
         return w
+
+    # ── MCP 配置 ──────────────────────────────
+
+    @staticmethod
+    def _mcp_target_path() -> str:
+        """MCP 配置写入位置：优先项目 .mcp.json，回退 Claude 用户级配置"""
+        # 项目根目录 .mcp.json（Claude Code 项目级）
+        proj = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))))
+        project_file = os.path.join(proj, ".mcp.json")
+        if os.path.exists(project_file):
+            return project_file
+        # Claude Code 用户级配置
+        claude_json = os.path.join(
+            os.path.expanduser("~"), ".claude.json")
+        if os.path.exists(claude_json):
+            return claude_json
+        return project_file
+
+    def _refresh_mcp_status(self):
+        """检查当前配置状态：已配置 / 未配置 / 路径不存在"""
+        entry = self._make_mcp_entry()
+        path = self._mcp_target_path()
+        if not os.path.exists(path):
+            self.lbl_mcp_status.setText("● 未配置（配置文件不存在）")
+            self.lbl_mcp_status.setStyleSheet(
+                "font-size:11px; color:#e05c5c;")
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            self.lbl_mcp_status.setText("● 配置文件已存在（无法解析）")
+            self.lbl_mcp_status.setStyleSheet(
+                "font-size:11px; color:#e0a000;")
+            return
+        servers = (data.get("mcpServers") or {}) if isinstance(data, dict) else {}
+        existing = servers.get("invoice")
+        if existing and self._entry_matches(existing, entry):
+            self.lbl_mcp_status.setText("● 已配置（invoice 服务就绪）")
+            self.lbl_mcp_status.setStyleSheet(
+                "font-size:11px; color:#4caf50;")
+        else:
+            self.lbl_mcp_status.setText("● 未配置（配置文件中无 invoice 服务）")
+            self.lbl_mcp_status.setStyleSheet(
+                "font-size:11px; color:#e0a000;")
+
+    @staticmethod
+    def _entry_matches(a: dict, b: dict) -> bool:
+        """比较两个 MCP 服务条目是否一致（command/args/cwd 全同）"""
+        return (a.get("command") == b.get("command")
+                and a.get("args") == b.get("args")
+                and a.get("cwd") == b.get("cwd"))
+
+    def _write_mcp_config(self):
+        """写入 MCP 配置：写入前自动备份原文件，可撤销"""
+        path = self._mcp_target_path()
+        entry = self._make_mcp_entry()
+        try:
+            # 读取现有配置（不存在则新建）
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    data = {}
+                # 备份原文件
+                bak = path + ".bak"
+                shutil.copy2(path, bak)
+            else:
+                data = {}
+            servers = data.setdefault("mcpServers", {})
+            servers["invoice"] = entry
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._refresh_mcp_status()
+            QMessageBox.information(
+                self, "MCP 配置",
+                f"已写入：{path}\n\n"
+                "重启 AI 客户端即可使用 invoice 服务。\n"
+                "原配置已备份为 .bak 文件。")
+        except (OSError, json.JSONDecodeError) as e:
+            QMessageBox.warning(self, "MCP 配置", f"写入失败：{e}")
+
+    def _test_mcp_connection(self):
+        """启动 MCP 进程并发送 initialize 请求，验证服务可用"""
+        entry = self._make_mcp_entry()
+        program = entry.get("command", "")
+        args = list(entry.get("args", []))
+        cwd = entry.get("cwd", "")
+        if not program:
+            QMessageBox.warning(self, "测试连接", "无法确定启动命令")
+            return
+        self._mcp_proc = QProcess(self)
+        self._mcp_proc.setProcessChannelMode(QProcess.MergedChannels)
+        if cwd:
+            self._mcp_proc.setWorkingDirectory(cwd)
+        self._mcp_proc.start(program, args)
+        if not self._mcp_proc.waitForStarted(5000):
+            QMessageBox.warning(self, "测试连接", "进程启动失败")
+            return
+        # 发送 initialize 请求
+        req = json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2024-11-05", "capabilities": {}},
+        }) + "\n"
+        self._mcp_proc.write(req.encode())
+        if not self._mcp_proc.waitForReadyRead(10000):
+            self._mcp_proc.kill()
+            QMessageBox.warning(self, "测试连接", "无响应（10 秒超时）")
+            return
+        resp = bytes(self._mcp_proc.readAll()).decode("utf-8", errors="replace")
+        self._mcp_proc.kill()
+        if "invoice-tool" in resp or "protocolVersion" in resp:
+            QMessageBox.information(self, "测试连接", "✅ MCP 服务连接正常")
+        else:
+            QMessageBox.warning(self, "测试连接", f"响应异常：\n{resp[:200]}")
 
     # ── 策略卡片事件 ─────────────────────────────
 
@@ -633,20 +752,7 @@ class SettingsDialog(QDialog):
         from PyQt5.QtWidgets import QApplication
         QApplication.clipboard().setText(self._mcp_json_text)
         QMessageBox.information(self, "已复制",
-                                "MCP JSON 配置已复制到剪贴板。\n\n"
-                                "粘贴到 AI 工具中，让它帮你完成配置。")
-
-    def _copy_mcp_prompt(self):
-        from PyQt5.QtWidgets import QApplication
-        prompt = (
-            "请帮我配置一个名为 invoice 的 MCP 服务器，使用以下 JSON：\n"
-            f"{self._mcp_json_text}\n\n"
-            "找到你使用的这款工具的 MCP 配置文件并写入，然后重启工具。"
-        )
-        QApplication.clipboard().setText(prompt)
-        QMessageBox.information(self, "已复制",
-                                "Prompt 已复制到剪贴板。\n\n"
-                                "粘贴到 AI 工具对话框，让它帮你完成配置。")
+                                "MCP JSON 配置已复制到剪贴板。")
 
     @staticmethod
     def _make_mcp_entry() -> dict:

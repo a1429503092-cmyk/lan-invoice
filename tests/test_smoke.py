@@ -396,10 +396,12 @@ class TestUiInstantiation(unittest.TestCase):
         self.assertIsNotNone(getattr(dlg, "_local_card", None))
         self.assertIsNotNone(getattr(dlg, "_webdav_card", None))
 
-        # 验证 MCP JSON 配置存在
+        # 验证 MCP JSON 配置存在（QPlainTextEdit 用 toPlainText）
         self.assertTrue(hasattr(dlg, "edit_mcp_json"))
-        self.assertIn("--mcp", dlg.edit_mcp_json.text())
-        self.assertIn("mcpServers", dlg.edit_mcp_json.text())
+        self.assertIn("--mcp", dlg.edit_mcp_json.toPlainText())
+        self.assertIn("mcpServers", dlg.edit_mcp_json.toPlainText())
+        # 验证新增：状态标签 + 写入/测试按钮
+        self.assertTrue(hasattr(dlg, "lbl_mcp_status"))
 
         dlg.close()
 

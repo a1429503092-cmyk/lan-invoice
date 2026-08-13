@@ -26,14 +26,14 @@ a = Analysis(
         'invoice_parser', 'models', 'repository',
         'filters', 'utils', 'worker',
         'logger', 'version', 'storage', 'mcp_server', 'mcp_tasks',
-        'pdfplumber', 'openpyxl', 'PIL', 'docx', 'mammoth',
+        'pdfplumber', 'openpyxl', 'PIL', 'PIL.ImageFont', 'PIL.ImageDraw', 'docx', 'mammoth',
         'matplotlib', 'matplotlib.backends.backend_qt5agg',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'PIL', 'Pillow',            # pdfplumber 图片提取，发票解析不需要
+        # 注意：不要排除 PIL/Pillow——matplotlib 渲染中文字体时依赖它
         'tkinter', 'tcl',           # 不使用 tkinter
         'PyQt5.QtMultimedia',       # 不需要音频/视频
         'PyQt5.QtWebEngine',        # 不需要浏览器引擎
