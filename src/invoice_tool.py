@@ -2313,9 +2313,13 @@ if __name__ == "__main__":
         )
         sys.exit(result.returncode)
     elif "--mcp" in sys.argv:
+        # MCP 是 stdio 协议：stdout 是 JSON-RPC 数据通道，日志只写文件
+        setup_logging(stdout=False)
+        log.info("MCP 服务器启动（无头模式，日志: %s）", "文件")
         from mcp_server import McpServer
         McpServer().run()
     elif "--http" in sys.argv:
+        setup_logging(stdout=False)
         from http_server import run_server
         port_idx = sys.argv.index("--port") + 1 if "--port" in sys.argv else -1
         port = int(sys.argv[port_idx]) if port_idx > 0 and port_idx < len(sys.argv) else 8080

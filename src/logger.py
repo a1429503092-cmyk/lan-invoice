@@ -73,12 +73,14 @@ def getLogger(name: str | None = None) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def setup_logging(gui_error_callback=None) -> None:
+def setup_logging(gui_error_callback=None, stdout: bool = True) -> None:
     """
     集中配置日志系统。应在 main() 中 QApplication 创建后调用一次。
 
     gui_error_callback: 未捕获异常时弹出 GUI 错误对话框的回调
                        签名: callback(title: str, message: str)
+    stdout: 是否同时输出到控制台。MCP 模式（stdio 协议）必须传 False——
+            stdout 是 JSON-RPC 数据通道，混入日志会破坏协议
     """
     global _gui_callback
     _gui_callback = gui_error_callback
@@ -98,17 +100,19 @@ def setup_logging(gui_error_callback=None) -> None:
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
 
-    # ── 控制台处理器：INFO+（开发用）──────────
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-
     # ── 配置根 Logger ─────────────────────────
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     root.handlers.clear()
     root.addHandler(file_handler)
-    root.addHandler(console_handler)
+
+    # ── 控制台处理器：INFO+（开发用）──────────
+    # MCP/HTTP 无头模式不接控制台：stdout 可能是协议通道或父进程管道
+    if stdout:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
 
     # ── 压制第三方库 DEBUG 噪音 ───────────────
     for noisy in ("pdfminer", "PIL", "fitz"):

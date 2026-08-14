@@ -13,6 +13,9 @@ from config_manager import ConfigManager
 from services.invoice_service import InvoiceService, VALID_SORT_FIELDS
 from mcp_tasks import TaskManager, get_task_manager
 from version import APP_VERSION
+from logger import getLogger
+
+log = getLogger(__name__)
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -100,6 +103,8 @@ class McpServer:
             # 兜底：响应含孤立代理字符（如 \udcad，来自客户端参数或未入库的
             # 解析中间数据）时 UTF-8 严格编码会崩溃。改用 ASCII 转义重写，
             # \uXXXX 形式是纯 ASCII，保证客户端能收到响应而不超时。
+            log.warning("响应含非法代理字符，已用 ASCII 转义兜底 "
+                        "(method=%s id=%s)", data.get("method"), data.get("id"))
             sys.stdout.write(json.dumps(data, ensure_ascii=True) + "\n")
         sys.stdout.flush()
 

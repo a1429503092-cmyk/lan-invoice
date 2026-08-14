@@ -443,7 +443,13 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
     # 代理字符），error 来自异常消息——统一清洗，保证返回数据可安全 UTF-8 编码
     for k, v in list(result.items()):
         if isinstance(v, str):
-            result[k] = _sanitize_str(v)
+            cleaned = _sanitize_str(v)
+            if cleaned != v:
+                # 只记录字段名与 repr（repr 会转义代理字符，日志文件是
+                # UTF-8 严格编码，直接打印原始值会导致日志写入失败）
+                log.warning("解析结果含非法代理字符（已清洗为 �）: "
+                            "字段=%s 值=%r", k, v)
+            result[k] = cleaned
 
     log.info("解析结果: %s | 类型=%s | 发票号=%s | 购买方=%s | 金额=%s | 税额=%s",
              fname,
