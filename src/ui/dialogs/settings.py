@@ -285,7 +285,11 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._section_title("MCP 服务"))
         mcp_hint = QLabel(
             "MCP（Model Context Protocol）是 AI 客户端的通用协议。\n"
-            "Claude Code、Cursor 等均支持。配置写入后重启 AI 客户端即可使用。"
+            "Claude Code、Cursor 等均支持。配置写入后重启 AI 客户端即可使用。\n\n"
+            "传输方式：stdio（标准输入/输出，本地进程直连）——由 AI 客户端"
+            "在本机启动程序并通过管道通信，不需要 URL 和端口。\n"
+            "注意：MCP over HTTP（SSE / Streamable HTTP）用于远程服务器，"
+            "本程序不提供 HTTP MCP 端点，只支持本地 stdio 连接。"
         )
         mcp_hint.setStyleSheet(f"font-size:11px; color:{TEXT_DIM};")
         mcp_hint.setWordWrap(True)
@@ -311,6 +315,15 @@ class SettingsDialog(QDialog):
             "border-radius:4px; font-family:Consolas,monospace; "
             "font-size:11px; padding:4px;")
         lay.addWidget(self.edit_mcp_json)
+
+        field_hint = QLabel(
+            "字段说明：command=本地启动命令，args=参数（--mcp 进入无头服务模式），"
+            "cwd=工作目录。该 JSON 即标准 stdio 传输配置，可直接用于任何"
+            "支持 MCP 的客户端。"
+        )
+        field_hint.setStyleSheet(f"font-size:10px; color:{TEXT_DIM};")
+        field_hint.setWordWrap(True)
+        lay.addWidget(field_hint)
 
         # 操作按钮行
         btn_row = QHBoxLayout()

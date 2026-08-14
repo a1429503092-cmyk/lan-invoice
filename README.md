@@ -40,7 +40,9 @@ uv run python src/invoice_tool.py
 
 ## MCP Server
 
-发票工具提供 MCP stdio 接口，**Claude Code 等 AI 客户端可直接控制**。
+发票工具提供 MCP **stdio** 接口（本地进程直连，经标准输入/输出通信），**Claude Code 等 AI 客户端可直接控制**。
+
+> 传输方式说明：MCP 有两种传输——**stdio**（本程序采用，由 AI 客户端在本机启动进程，无需 URL/端口）和 **HTTP**（分 **SSE** 与 **Streamable HTTP** 两种，用于远程服务器，本程序不提供 HTTP MCP 端点）。以下配置均为 stdio 格式。
 
 ### 配置
 
