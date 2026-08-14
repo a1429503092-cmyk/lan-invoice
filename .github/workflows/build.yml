@@ -35,11 +35,23 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller pillow
 
+      - name: Diagnostics
+        shell: pwsh
+        run: |
+          python --version
+          pip show pyinstaller | Select-String "Version"
+          Get-ChildItem src | Select-Object -First 5 Name
+          Get-ChildItem *.spec | Select-Object Name
+
       - name: Install UPX
         run: choco install upx -y --no-progress
 
-      - name: Install Inno Setup 6
-        run: choco install innosetup -y --no-progress
+      - name: Install Inno Setup 6 (official installer)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://files.jrsoftware.org/is/6/innosetup-6.4.1.exe" -OutFile "$env:TEMP\innosetup.exe"
+          Start-Process "$env:TEMP\innosetup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { throw "ISCC.exe not found after install" }
 
       - name: Build EXE (PyInstaller + UPX)
         run: |
