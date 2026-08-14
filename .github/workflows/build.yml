@@ -46,12 +46,17 @@ jobs:
       - name: Install UPX
         run: choco install upx -y --no-progress
 
-      - name: Install Inno Setup 6 (official installer)
+      - name: Install Inno Setup 6
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://files.jrsoftware.org/is/6/innosetup-6.4.1.exe" -OutFile "$env:TEMP\innosetup.exe"
-          Start-Process "$env:TEMP\innosetup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
-          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { throw "ISCC.exe not found after install" }
+          choco install innosetup -y --no-progress
+          # choco 包安装到 Program Files (x86)\Inno Setup 6
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            # 兼容 choco 新包路径
+            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $iscc) { throw "ISCC.exe not found" }
+            Write-Host "ISCC at: $($iscc.FullName)"
+          }
 
       - name: Build EXE (PyInstaller + UPX)
         run: |
