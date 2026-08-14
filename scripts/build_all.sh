@@ -29,6 +29,8 @@ ASCII=$(echo "lan_invoice_${VER}" | tr '.' '_')
 cp "dist/lan-invoice_${VER}.exe" "dist/${ASCII}.exe"
 cat > dist/setup.iss <<EOF
 ; Inno Setup Script — auto-generated v$VER
+; 安装版用固定 EXE 名 lan-invoice.exe：MCP 配置/快捷方式指向固定路径，
+; 覆盖更新后无需改动；同时清理旧版本号命名的遗留 EXE
 [Setup]
 AppName=发票归档
 AppVersion=$VER
@@ -40,16 +42,20 @@ SolidCompression=yes
 UninstallDisplayName=发票归档
 OutputDir=./
 OutputBaseFilename=lan-invoice_${VER}_setup
+CloseApplications=yes
+
+[InstallDelete]
+Type: files; Name: "{app}\\lan-invoice_*.exe"
 
 [Files]
-Source: "${ASCII}.exe"; DestDir: "{app}"; DestName: "lan-invoice_${VER}.exe"
+Source: "${ASCII}.exe"; DestDir: "{app}"; DestName: "lan-invoice.exe"
 
 [Icons]
-Name: "{group}\\发票归档"; Filename: "{app}\\lan-invoice_${VER}.exe"
-Name: "{commondesktop}\\发票归档"; Filename: "{app}\\lan-invoice_${VER}.exe"
+Name: "{group}\\发票归档"; Filename: "{app}\\lan-invoice.exe"
+Name: "{commondesktop}\\发票归档"; Filename: "{app}\\lan-invoice.exe"
 
 [Run]
-Filename: "{app}\\lan-invoice_${VER}.exe"; Description: "启动 发票归档"; Flags: nowait postinstall
+Filename: "{app}\\lan-invoice.exe"; Description: "启动 发票归档"; Flags: nowait postinstall
 EOF
 wine "$ISCC" "Z:\\src\\dist\\setup.iss" || true  # Wine 下输出中文名可能乱码，文件仍在
 

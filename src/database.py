@@ -449,7 +449,7 @@ class Database:
         inv.remark = sanitize_str(inv.remark)
         inv.error = sanitize_str(inv.error)
         if inv.tags:
-            inv.tags = {k: sanitize_str(v) for k, v in inv.tags.items()}
+            inv.tags = {sanitize_str(k): sanitize_str(v) for k, v in inv.tags.items()}
         if inv.attachments:
             inv.attachments = [sanitize_str(p) for p in inv.attachments]
         return inv

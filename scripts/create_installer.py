@@ -42,6 +42,10 @@ EXE_NAME = f"lan-invoice_{APP_VERSION}.exe"          # 便携版
 SETUP_NAME = f"lan-invoice_{APP_VERSION}_setup.exe"   # 安装包
 ZIP_NAME = f"lan-invoice_{APP_VERSION}_portable.zip"  # 便携 ZIP
 
+# 安装版固定 EXE 名（不带版本号）：覆盖安装到固定目录后，
+# MCP 配置/快捷方式指向此路径永远有效，更新后无需改配置
+INSTALLED_EXE_NAME = "lan-invoice.exe"
+
 DIST_DIR = PROJECT_ROOT / "dist"
 EXE_SRC = DIST_DIR / EXE_NAME
 ICON_SRC = PROJECT_ROOT / "icon.ico"
@@ -86,10 +90,16 @@ echo   正在安装 {app_name} {app_version}
 echo ============================================
 echo.
 
+:: ---- 停止运行中的旧版本（固定名，覆盖安装需要）----
+taskkill /F /IM {exe_name} >nul 2>&1
+
 :: ---- 创建程序目录 ----
 if not exist "!APP_DIR!" (
     mkdir "!APP_DIR!"
 )
+
+:: ---- 清理旧版本文件（早期版本号命名的 EXE）----
+del "!APP_DIR!\lan-invoice_*.exe" /q >nul 2>&1
 
 :: ---- 复制文件 ----
 echo [1/3] 复制程序文件...
@@ -143,7 +153,7 @@ pause
         app_dir=APP_DIR_NAME,
         app_name=APP_NAME,
         app_version=APP_VERSION,
-        exe_name=ASCII_EXE_NAME,
+        exe_name=INSTALLED_EXE_NAME,
     )
 
     bat_path = target_dir / "install.bat"
@@ -280,16 +290,22 @@ SolidCompression=yes
 UninstallDisplayName={APP_NAME}
 OutputDir=./
 OutputBaseFilename={SETUP_NAME.replace('.exe', '')}
+CloseApplications=yes
+
+; 固定名覆盖安装：MCP 配置/快捷方式指向 {INSTALLED_EXE_NAME}，
+; 更新后路径不变无需重配；同时清理旧版本号命名的遗留 EXE
+[InstallDelete]
+Type: files; Name: "{{app}}\\lan-invoice_*.exe"
 
 [Files]
-Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{EXE_NAME}"
+Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{INSTALLED_EXE_NAME}"
 
 [Icons]
-Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
-Name: "{{commondesktop}}\\{APP_NAME}"; Filename: "{{app}}\\{EXE_NAME}"
+Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{INSTALLED_EXE_NAME}"
+Name: "{{commondesktop}}\\{APP_NAME}"; Filename: "{{app}}\\{INSTALLED_EXE_NAME}"
 
 [Run]
-Filename: "{{app}}\\{EXE_NAME}"; Description: "启动 {APP_NAME}"; \
+Filename: "{{app}}\\{INSTALLED_EXE_NAME}"; Description: "启动 {APP_NAME}"; \
 Flags: nowait postinstall
 """
 
@@ -352,6 +368,8 @@ def build_with_nsis(source_dir: Path) -> bool:
         '!insertmacro MUI_LANGUAGE "SimpChinese"\n'
         '\n'
         'Section "Install"\n'
+        '    ExecWait "taskkill /F /IM {exe_name}"\n'
+        '    Delete "$INSTDIR\\lan-invoice_*.exe"\n'
         '    SetOutPath "$INSTDIR"\n'
         '    File "{exe_src}"\n'
         '    File "{icon_src}"\n'
@@ -370,6 +388,7 @@ def build_with_nsis(source_dir: Path) -> bool:
         '\n'
         'Section "Uninstall"\n'
         '    Delete "$INSTDIR\\${{EXE_NAME}}"\n'
+        '    Delete "$INSTDIR\\lan-invoice_*.exe"\n'
         '    Delete "$INSTDIR\\icon.ico"\n'
         '    Delete "$INSTDIR\\uninstall.exe"\n'
         '    Delete "$DESKTOP\\${{PRODUCT_NAME}}.lnk"\n'
@@ -380,7 +399,7 @@ def build_with_nsis(source_dir: Path) -> bool:
     ).format(
         app_name=APP_NAME,
         app_version=APP_VERSION,
-        exe_name=EXE_NAME,
+        exe_name=INSTALLED_EXE_NAME,
         setup_exe=str(SETUP_EXE).replace("\\", "\\\\"),
         exe_src=str(EXE_SRC).replace("\\", "\\\\"),
         icon_src=str(ICON_SRC).replace("\\", "\\\\"),

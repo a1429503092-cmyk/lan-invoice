@@ -94,7 +94,13 @@ class McpServer:
                 self._write(resp)
 
     def _write(self, data: dict):
-        sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
+        try:
+            sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
+        except UnicodeEncodeError:
+            # 兜底：响应含孤立代理字符（如 \udcad，来自客户端参数或未入库的
+            # 解析中间数据）时 UTF-8 严格编码会崩溃。改用 ASCII 转义重写，
+            # \uXXXX 形式是纯 ASCII，保证客户端能收到响应而不超时。
+            sys.stdout.write(json.dumps(data, ensure_ascii=True) + "\n")
         sys.stdout.flush()
 
     def _handle(self, req: dict) -> dict | None:

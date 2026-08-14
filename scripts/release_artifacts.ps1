@@ -22,6 +22,8 @@ $ascii = "lan_invoice_" + ($ver -replace '\.', '_') + ".exe"
 Copy-Item "dist/lan-invoice_$ver.exe" "dist/$ascii" -Force
 
 # 生成 Inno Setup 脚本
+# 安装版用固定 EXE 名 lan-invoice.exe：MCP 配置/快捷方式指向固定路径，
+# 覆盖更新后无需改动；同时清理旧版本号命名的遗留 EXE
 $iss = @"
 ; Inno Setup Script - auto-generated v$ver
 [Setup]
@@ -35,16 +37,20 @@ SolidCompression=yes
 UninstallDisplayName=发票归档
 OutputDir=./
 OutputBaseFilename=lan-invoice_${ver}_setup
+CloseApplications=yes
+
+[InstallDelete]
+Type: files; Name: "{app}\lan-invoice_*.exe"
 
 [Files]
-Source: "$ascii"; DestDir: "{app}"; DestName: "lan-invoice_$ver.exe"
+Source: "$ascii"; DestDir: "{app}"; DestName: "lan-invoice.exe"
 
 [Icons]
-Name: "{group}\发票归档"; Filename: "{app}\lan-invoice_$ver.exe"
-Name: "{commondesktop}\发票归档"; Filename: "{app}\lan-invoice_$ver.exe"
+Name: "{group}\发票归档"; Filename: "{app}\lan-invoice.exe"
+Name: "{commondesktop}\发票归档"; Filename: "{app}\lan-invoice.exe"
 
 [Run]
-Filename: "{app}\lan-invoice_$ver.exe"; Description: "启动 发票归档"; Flags: nowait postinstall
+Filename: "{app}\lan-invoice.exe"; Description: "启动 发票归档"; Flags: nowait postinstall
 "@
 Set-Content -Path "dist/setup.iss" -Value $iss -Encoding UTF8
 Write-Host "Generated dist/setup.iss for v$ver"

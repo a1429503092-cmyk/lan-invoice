@@ -44,7 +44,11 @@ class AppHandler(BaseHTTPRequestHandler):
     # ── 工具方法 ──────────────────────────────
 
     def _send(self, code: int, data):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        try:
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            # 与 MCP _write 相同的兜底：孤立代理字符改用 ASCII 转义
+            body = json.dumps(data, ensure_ascii=True).encode("ascii")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")

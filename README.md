@@ -58,13 +58,13 @@ uv run python src/invoice_tool.py
 }
 ```
 
-打包后用 EXE 路径：
+打包后用 EXE 路径（安装版 EXE 为固定名 `lan-invoice.exe`，覆盖更新后路径不变，MCP 配置无需改动）：
 
 ```json
 {
   "mcpServers": {
     "invoice": {
-      "command": "D:/path/发票归档.exe",
+      "command": "C:/Program Files/lan-invoice/lan-invoice.exe",
       "args": ["--mcp"]
     }
   }

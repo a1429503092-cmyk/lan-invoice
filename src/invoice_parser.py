@@ -439,6 +439,12 @@ def parse_invoice_pdf(pdf_path: str) -> dict:
     except Exception as e:
         result["error"] = str(e)
 
+    # 兜底清洗：file/pdf_path 来自 os.path（可能携带 surrogateescape 解码的
+    # 代理字符），error 来自异常消息——统一清洗，保证返回数据可安全 UTF-8 编码
+    for k, v in list(result.items()):
+        if isinstance(v, str):
+            result[k] = _sanitize_str(v)
+
     log.info("解析结果: %s | 类型=%s | 发票号=%s | 购买方=%s | 金额=%s | 税额=%s",
              fname,
              result["invoice_type"] or "(未识别)",
