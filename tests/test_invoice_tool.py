@@ -116,6 +116,10 @@ class TestRecordMatchesFilter(unittest.TestCase):
         app._filter_seller = None
         app._filter_buyer = ""
         app._filter_company = ""
+        app._filter_amount_min = None
+        app._filter_amount_max = None
+        app._filter_date_from = None
+        app._filter_date_to = None
         for k, v in filters.items():
             setattr(app, k, v)
         return app

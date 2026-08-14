@@ -15,12 +15,13 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QFileDialog, QMessageBox, QHeaderView, QStatusBar, QFrame,
-    QProgressBar, QAbstractItemView, QDialog,
+    QProgressBar, QAbstractItemView, QDialog, QProgressDialog,
     QComboBox, QMenu, QSizePolicy, QSplitter
 )
 from PyQt5 import QtCore
-from PyQt5.QtCore import Qt, QTimer, QUrl, QEvent
+from PyQt5.QtCore import Qt, QTimer, QUrl, QEvent, QObject
 from PyQt5.QtGui import QColor, QDesktopServices, QDragEnterEvent, QDropEvent, QFont, QFontDatabase
+from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from dialogs import SettingsDialog, DeleteConfirmDialog
 from worker import ParseWorker
@@ -54,6 +55,68 @@ COL_IDX = {c: i for i, c in enumerate(COLUMNS)}
 # 支持的文件扩展名
 IMG_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'}
 ATTACH_EXTS = {'.pdf', '.docx', '.doc', '.xlsx', '.xls'}  # 附件文档格式
+
+
+class _UpdateDownloader(QObject):
+    """更新包下载器 — QNetworkAccessManager 异步下载，带进度信号。
+
+    支持取消（cancel 时清理半截文件），下载完成/失败通过信号通知主窗口。
+    """
+
+    progress = QtCore.pyqtSignal(int, int)     # (received, total)
+    finished = QtCore.pyqtSignal(str)          # save_path
+    failed = QtCore.pyqtSignal(str)            # error message
+
+    def __init__(self, url: str, save_path: str, parent=None):
+        super().__init__(parent)
+        self._url = url
+        self._save_path = save_path
+        self._auto_install = False
+        self._nam = QNetworkAccessManager(self)
+        self._reply = None
+        self._file = None
+        self._nam.finished.connect(self._on_finished)
+
+    def start(self, auto_install: bool):
+        """开始下载。auto_install 记录到完成回调里使用。"""
+        self._auto_install = auto_install
+        if os.path.exists(self._save_path):
+            os.remove(self._save_path)  # 旧安装包无保留价值，直接覆盖
+        self._file = open(self._save_path, "wb")
+        req = QNetworkRequest(QUrl(self._url))
+        req.setHeader(QNetworkRequest.UserAgentHeader, "lan-invoice-updater")
+        self._reply = self._nam.get(req)
+        self._reply.downloadProgress.connect(self._on_progress)
+        self._reply.error.connect(self._on_error)
+
+    def cancel(self):
+        """取消下载并清理半截文件。"""
+        if self._reply:
+            self._reply.abort()
+        self._cleanup_file(keep=False)
+
+    def _on_progress(self, received, total):
+        self.progress.emit(int(received), int(total))
+
+    def _on_error(self, code):
+        err = self._reply.errorString() if self._reply else str(code)
+        self._cleanup_file(keep=False)
+        self.failed.emit(err)
+
+    def _on_finished(self):
+        self._cleanup_file(keep=True)
+        self.finished.emit(self._save_path)
+
+    def _cleanup_file(self, keep: bool):
+        """关闭文件句柄；keep=False 时删除文件（失败/取消场景）。"""
+        if self._file:
+            self._file.close()
+            self._file = None
+        if not keep and os.path.exists(self._save_path):
+            try:
+                os.remove(self._save_path)
+            except OSError:
+                pass
 
 
 class InvoiceApp(QMainWindow):
@@ -1292,21 +1355,74 @@ class InvoiceApp(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("发现新版本")
         msg.setText(f"检测到新版本 v{version}\n当前版本：v{APP_VERSION}")
-        btn_portable = msg.addButton("下载便携版", QMessageBox.YesRole)
-        btn_installer = msg.addButton("下载安装包", QMessageBox.ActionRole)
+        btn_installer = msg.addButton("下载并安装更新", QMessageBox.YesRole)
+        btn_portable = msg.addButton("下载便携版", QMessageBox.ActionRole)
         btn_skip = msg.addButton("跳过此版本", QMessageBox.NoRole)
         btn_cancel = msg.addButton("稍后提醒", QMessageBox.RejectRole)
-        msg.setDefaultButton(btn_portable)
+        msg.setDefaultButton(btn_installer)
         msg.exec_()
         clicked = msg.clickedButton()
-        if clicked == btn_portable:
-            QDesktopServices.openUrl(QUrl(self._best_download_url(url, "portable")))
-        elif clicked == btn_installer:
-            QDesktopServices.openUrl(QUrl(self._best_download_url(url, "installer")))
+        if clicked == btn_installer:
+            self._start_update_download(
+                self._best_download_url(url, "installer"), auto_install=True)
+        elif clicked == btn_portable:
+            self._start_update_download(
+                self._best_download_url(url, "portable"), auto_install=False)
         elif clicked == btn_skip:
             self._config.skipped_version = version
             self._config.save()
         self._manual_check_pending = False
+
+    def _start_update_download(self, url: str, auto_install: bool):
+        """直接下载更新包（不打开浏览器），带进度对话框。
+
+        auto_install=True（安装包）：下载完成后静默启动安装程序，
+        Inno Setup 自动关闭运行中的进程（CloseApplications）并覆盖安装；
+        auto_install=False（便携版）：下载到下载目录后打开所在文件夹。
+        """
+        fname = os.path.basename(url.split("?")[0]) or "lan-invoice_update.exe"
+        save_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, fname)
+
+        action = "下载并安装" if auto_install else "下载"
+        self._dl_progress = QProgressDialog(
+            f"正在{action} {fname}…", "取消", 0, 100, self)
+        self._dl_progress.setWindowTitle("更新")
+        self._dl_progress.setWindowModality(Qt.WindowModal)
+        self._dl_progress.show()
+
+        self._dl_downloader = _UpdateDownloader(url, save_path, self)
+        self._dl_downloader.progress.connect(self._on_dl_progress)
+        self._dl_downloader.finished.connect(self._on_dl_finished)
+        self._dl_downloader.failed.connect(self._on_dl_failed)
+        self._dl_progress.canceled.connect(self._dl_downloader.cancel)
+        self._dl_downloader.start(auto_install)
+
+    def _on_dl_progress(self, received: int, total: int):
+        if self._dl_progress and total:
+            self._dl_progress.setValue(int(received * 100 / total))
+
+    def _on_dl_finished(self, save_path: str):
+        if self._dl_progress:
+            self._dl_progress.close()
+        if self._dl_downloader._auto_install:
+            # 静默覆盖安装：/VERYSILENT 跳过安装向导，UAC 提权后自动完成
+            import subprocess
+            try:
+                subprocess.Popen([save_path, "/VERYSILENT",
+                                  "/SUPPRESSMSGBOXES", "/NORESTART"])
+            except OSError as e:
+                QMessageBox.warning(self, "更新", f"启动安装程序失败: {e}")
+        else:
+            QDesktopServices.openUrl(
+                QUrl.fromLocalFile(os.path.dirname(save_path)))
+            self.status.showMessage(f"便携版已下载: {save_path}")
+
+    def _on_dl_failed(self, err: str):
+        if self._dl_progress:
+            self._dl_progress.close()
+        QMessageBox.warning(self, "更新", f"下载失败: {err}")
 
     @staticmethod
     def _best_download_url(url: str, kind: str) -> str:

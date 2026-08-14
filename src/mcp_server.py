@@ -467,7 +467,7 @@ class McpServer:
                  "properties": {},
              }},
             {"name": "download_update",
-             "description": "下载新版本安装包到指定目录（支持进度，走异步任务）。先用 check_update 获取下载链接。",
+             "description": "下载新版本安装包到指定目录（支持进度，走异步任务）。auto_install=true 时下载完成后自动静默覆盖安装（Inno Setup 会自动关闭运行中的程序，本 MCP 进程也会被关闭，客户端需重新连接）。先用 check_update 获取下载链接。",
              "inputSchema": {
                  "$schema": "https://json-schema.org/draft/2020-12/schema",
                  "type": "object",
@@ -478,6 +478,8 @@ class McpServer:
                                     "description": "保存目录（默认桌面 Downloads 文件夹）"},
                      "filename": {"type": "string",
                                   "description": "可选：自定义保存文件名（默认用 URL 的文件名）"},
+                     "auto_install": {"type": "boolean",
+                                      "description": "下载完成后自动静默运行安装包覆盖更新（默认 false）"},
                  },
                  "required": ["url"],
              }},
@@ -619,6 +621,19 @@ class McpServer:
                             _progress(pct, f"下载中 {downloaded/1024/1024:.1f}/{total/1024/1024:.1f} MB")
             os.replace(tmp, dest)
             _progress(100, f"下载完成")
+            # auto_install：静默启动安装程序覆盖更新。
+            # Inno Setup 会关闭运行中的 lan-invoice 进程（含本 MCP 进程），
+            # 所以响应必须在本进程被关闭前发出
+            if a.get("auto_install"):
+                import subprocess
+                try:
+                    subprocess.Popen([dest, "/VERYSILENT",
+                                      "/SUPPRESSMSGBOXES", "/NORESTART"])
+                    return {"status": "ok", "path": dest,
+                            "size_mb": round(downloaded / 1024 / 1024, 1),
+                            "auto_install": "已启动安装程序，请留意 UAC 提权弹窗"}
+                except OSError as e:
+                    return {"error": f"启动安装程序失败: {e}"}
             return {"status": "ok", "path": dest,
                     "size_mb": round(downloaded / 1024 / 1024, 1)}
         except Exception as e:
