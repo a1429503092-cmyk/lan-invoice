@@ -79,3 +79,61 @@ jobs:
           path: |
             dist/lan-invoice_*.exe
           retention-days: 30
+
+  # ── Nuitka 并行实验（评估迁移可行性，不影响主发布流程）──
+  # 目标：对比 PyInstaller（主 job）与 Nuitka 的体积/启动/误报。
+  # 结论未定前 continue-on-error，失败不阻塞发布。
+  experiment-nuitka:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pillow nuitka zstandard
+
+      - name: Build with Nuitka (onefile)
+        shell: pwsh
+        run: |
+          # Nuitka 2.x 语法：--mode=onefile（单文件）、--enable-plugins 复数
+          python -m nuitka --mode=onefile `
+            --enable-plugins=pyqt5,matplotlib `
+            --windows-console-mode=disable `
+            --windows-icon-from-ico=icon.ico `
+            --include-data-dir=src/ui/icons=ui/icons `
+            --assume-yes-for-downloads `
+            --output-dir=build-nuitka `
+            --output-filename=lan-invoice-nuitka.exe `
+            src/invoice_tool.py
+
+      - name: Smoke test (MCP over stdio)
+        shell: pwsh
+        run: |
+          $req = '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+          $resp = ($req | & ".\build-nuitka\lan-invoice-nuitka.exe" --mcp 2>$null | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0) { throw "MCP 冒烟失败，退出码 $LASTEXITCODE" }
+          $obj = $resp | ConvertFrom-Json
+          if ($obj.result.serverInfo.name -ne "invoice-tool") { throw "响应异常: $resp" }
+          Write-Host "MCP 冒烟通过: $($obj.result.serverInfo.name) v$($obj.result.serverInfo.version)"
+
+      - name: Size report
+        shell: pwsh
+        run: |
+          $f = Get-Item ".\build-nuitka\lan-invoice-nuitka.exe"
+          Write-Host "Nuitka 单文件产物大小: $([math]::Round($f.Length/1MB, 2)) MB"
+
+      - name: Upload Nuitka experiment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-invoice-nuitka-experiment
+          path: build-nuitka/lan-invoice-nuitka.exe
+          retention-days: 14
