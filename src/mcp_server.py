@@ -660,14 +660,17 @@ class McpServer:
     def _check_update(self, _args):
         """检查更新：返回最新版本 + 全部资产的直接下载链接。
 
-        使用 Gitee 的 /releases/latest 接口（实测删除旧 release 后
-        会正确返回最新版本，此前返回旧版是 CDN 缓存滞后）。
+        使用 GitHub 的 /releases/latest 公开接口（无需 token）。
+        GitHub API 强制要求 User-Agent，否则返回 403。
         """
         try:
             import http.client
-            conn = http.client.HTTPSConnection("gitee.com", timeout=10)
-            conn.request("GET",
-                         "/api/v5/repos/GUYI33/lan-invoice/releases/latest")
+            conn = http.client.HTTPSConnection("api.github.com", timeout=10)
+            conn.request(
+                "GET",
+                "/repos/a1429503092-cmyk/lan-invoice/releases/latest",
+                headers={"User-Agent": "lan-invoice-updater",
+                         "Accept": "application/vnd.github+json"})
             resp = conn.getresponse()
             data = json.loads(resp.read().decode())
             conn.close()
@@ -696,7 +699,7 @@ class McpServer:
             "current": APP_VERSION,
             "latest": tag,
             "has_newer": newer,
-            "release_page": f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}" if tag else "",
+            "release_page": f"https://github.com/a1429503092-cmyk/lan-invoice/releases/tag/v{tag}" if tag else "",
             "assets": assets,
         }
         # 便捷字段：便携版/安装包直达

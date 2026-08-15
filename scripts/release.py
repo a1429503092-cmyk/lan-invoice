@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
-"""一键构建 + 发布到 Gitee Releases
+"""发布 CI 产物到 GitHub Releases（主）+ Gitee Releases（可选镜像）
 
 用法:
-  uv run python scripts/release.py          # 构建并发布
-  uv run python scripts/release.py --dry    # 仅构建，不发布
-  uv run python scripts/release.py --ver 5.3.0  # 指定版本号
+  uv run python scripts/release.py --ver 5.6.4           # 发布到 GitHub
+  uv run python scripts/release.py --ver 5.6.4 --mirror-gitee  # GitHub + Gitee
+  uv run python scripts/release.py --dry                  # 仅检查产物，不发布
+
+前置: CI（build-installer / build-portable）构建完成后，
+下载两个 artifact 到 dist/：
+  dist/lan-invoice_{ver}_setup.exe  （安装版，Nuitka standalone）
+  dist/lan-invoice_{ver}.exe        （便携版，PyInstaller）
 
 环境变量:
-  GITEE_TOKEN  Gitee 私人令牌（发布时需要）
+  GITHUB_TOKEN       GitHub 私人令牌（发布 GitHub 需要）
+  GITEE_ACCESSTOKEN  Gitee 私人令牌（--mirror-gitee 时需要）
 """
 
 import os
@@ -16,12 +22,14 @@ import re
 import subprocess
 import json
 import http.client
+import urllib.request
+import urllib.error
 from urllib.parse import urlencode
 from datetime import datetime
 
-REPO_OWNER = "GUYI33"
-REPO_NAME = "lan-invoice"
-API_HOST = "gitee.com"
+GITHUB_REPO = "a1429503092-cmyk/lan-invoice"
+GITEE_OWNER = "GUYI33"
+GITEE_NAME = "lan-invoice"
 VERSION_FILE = "src/version.py"
 DIST_DIR = "dist"
 
@@ -57,12 +65,12 @@ def git_commit_and_tag(ver: str):
     print(f"已推送 tag v{ver}")
 
 
-def create_release(ver: str, token: str, changelog: str = "") -> dict:
+def _release_body(ver: str, changelog: str) -> str:
     if changelog:
         changes_section = changelog
     else:
         changes_section = "详见提交记录"
-    body = f"""## v{ver}
+    return f"""## v{ver}
 
 构建日期：{datetime.now().strftime('%Y-%m-%d')}
 
@@ -74,12 +82,65 @@ def create_release(ver: str, token: str, changelog: str = "") -> dict:
 
 | 文件 | 说明 |
 |------|------|
-| 发票归档_v{ver}_portable.zip | 便携版，解压到任意目录即可运行 |
-| 发票归档_v{ver}_setup.exe | 安装版，含开始菜单和桌面快捷方式 |
+| lan-invoice_{ver}_setup.exe | 安装版（推荐）：standalone 启动免解压，自动覆盖更新 |
+| lan-invoice_{ver}.exe | 便携版：单文件，解压即用（启动稍慢） |
 
 > 如遇到 SmartScreen 拦截，点击「更多信息」→「仍要运行」即可。
 """
 
+
+def create_github_release(ver: str, token: str, changelog: str = "") -> dict:
+    """创建 GitHub Release（tag 需已推送）"""
+    body = _release_body(ver, changelog)
+    payload = json.dumps({
+        "tag_name": f"v{ver}",
+        "name": f"v{ver}",
+        "body": body,
+        "target_commitish": "master",
+        "prerelease": False,
+    }).encode()
+
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{GITHUB_REPO}/releases",
+        data=payload, method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("User-Agent", "lan-invoice-release")
+    req.add_header("X-GitHub-Api-Version", "2022-11-28")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        sys.exit(f"创建 GitHub Release 失败 ({e.code}): {e.read().decode()[:400]}")
+
+    print(f"GitHub Release 已创建 (id={data['id']})")
+    return data
+
+
+def upload_github_asset(release_id: int, filepath: str, token: str):
+    """上传附件到 GitHub Release"""
+    fname = os.path.basename(filepath)
+    with open(filepath, "rb") as f:
+        file_data = f.read()
+    req = urllib.request.Request(
+        f"https://uploads.github.com/repos/{GITHUB_REPO}/releases/"
+        f"{release_id}/assets?name={urllib.request.quote(fname)}",
+        data=file_data, method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Accept", "application/vnd.github+json")
+    req.add_header("Content-Type", "application/octet-stream")
+    req.add_header("User-Agent", "lan-invoice-release")
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        sys.exit(f"上传附件失败 ({e.code}): {e.read().decode()[:400]}")
+    print(f"附件已上传: {fname} → {data.get('browser_download_url', '')}")
+
+
+def create_gitee_release(ver: str, token: str, changelog: str = "") -> dict:
+    """创建 Gitee Release（镜像）"""
+    body = _release_body(ver, changelog)
     params = urlencode({
         "access_token": token,
         "tag_name": f"v{ver}",
@@ -89,10 +150,10 @@ def create_release(ver: str, token: str, changelog: str = "") -> dict:
         "prerelease": "false",
     })
 
-    conn = http.client.HTTPSConnection(API_HOST)
+    conn = http.client.HTTPSConnection("gitee.com")
     conn.request(
         "POST",
-        f"/api/v5/repos/{REPO_OWNER}/{REPO_NAME}/releases",
+        f"/api/v5/repos/{GITEE_OWNER}/{GITEE_NAME}/releases",
         body=params,
         headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
@@ -101,10 +162,10 @@ def create_release(ver: str, token: str, changelog: str = "") -> dict:
     conn.close()
 
     if resp.status not in (200, 201):
-        sys.exit(f"创建 Release 失败 ({resp.status}): {data}")
+        sys.exit(f"创建 Gitee Release 失败 ({resp.status}): {data}")
 
     release_id = data["id"]
-    print(f"Release 已创建 (id={release_id})")
+    print(f"Gitee Release 已创建 (id={release_id})")
     return data
 
 
@@ -128,10 +189,10 @@ def upload_asset(release_id: int, filepath: str, token: str):
     body += file_data
     body += f"\r\n--{boundary}--\r\n".encode("utf-8")
 
-    conn = http.client.HTTPSConnection(API_HOST)
+    conn = http.client.HTTPSConnection("gitee.com")
     conn.request(
         "POST",
-        f"/api/v5/repos/{REPO_OWNER}/{REPO_NAME}/releases/{release_id}/attach_files",
+        f"/api/v5/repos/{GITEE_OWNER}/{GITEE_NAME}/releases/{release_id}/attach_files",
         body=body,
         headers={
             "Content-Type": f"multipart/form-data; boundary={boundary}",
@@ -203,9 +264,12 @@ def main():
     """
     dry = "--dry" in sys.argv
     ver_arg = None
-    for a in sys.argv[1:]:
-        if a.startswith("--ver"):
-            ver_arg = a.split("=")[-1] if "=" in a else None
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--ver" and i + 1 < len(args):
+            ver_arg = args[i + 1]
+        elif a.startswith("--ver="):
+            ver_arg = a.split("=", 1)[1]
 
     old_ver = read_version()
     ver = ver_arg or bump_version(old_ver)
@@ -240,11 +304,6 @@ def main():
                 if k.strip() not in os.environ:
                     os.environ[k.strip()] = v.strip()
 
-    # 兼容两种环境变量名（GITEE_ACCESSTOKEN 为系统实际配置）
-    token = os.environ.get("GITEE_TOKEN") or os.environ.get("GITEE_ACCESSTOKEN")
-    if not token:
-        sys.exit("请设置环境变量 GITEE_TOKEN 或在项目根目录创建 .env 文件")
-
     if ver != old_ver:
         git_commit_and_tag(ver)
 
@@ -255,10 +314,25 @@ def main():
 • GUI 启动提速：字体按需加载（约快 1.8s）
 • 安装版固定 EXE 名：覆盖更新后 MCP 配置永久有效
 • MCP 无头模式接入文件日志"""
-    release = create_release(ver, token, changelog)
-    upload_asset(release["id"], setup_exe, token)
-    upload_asset(release["id"], portable_exe, token)
-    print(f"\n发布成功: https://gitee.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{ver}")
+
+    # ── 主发布：GitHub ──
+    gh_token = os.environ.get("GITHUB_TOKEN")
+    if not gh_token:
+        sys.exit("请设置环境变量 GITHUB_TOKEN（GitHub 私人令牌）")
+    release = create_github_release(ver, gh_token, changelog)
+    upload_github_asset(release["id"], setup_exe, gh_token)
+    upload_github_asset(release["id"], portable_exe, gh_token)
+    print(f"GitHub 发布成功: https://github.com/{GITHUB_REPO}/releases/tag/v{ver}")
+
+    # ── 可选镜像：Gitee（--mirror-gitee）──
+    if "--mirror-gitee" in sys.argv:
+        g_token = os.environ.get("GITEE_TOKEN") or os.environ.get("GITEE_ACCESSTOKEN")
+        if not g_token:
+            sys.exit("--mirror-gitee 需要 GITEE_ACCESSTOKEN 环境变量")
+        g_release = create_gitee_release(ver, g_token, changelog)
+        upload_asset(g_release["id"], setup_exe, g_token)
+        upload_asset(g_release["id"], portable_exe, g_token)
+        print(f"Gitee 镜像发布成功: https://gitee.com/{GITEE_OWNER}/{GITEE_NAME}/releases/tag/v{ver}")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ uv run python src/invoice_tool.py
 - 导入前预览去重：解析后展示新/重复/失败，可勾选导入
 - 多维筛选：年月/发票类型/销售方/购买方/标签/全文搜索
 - 一键导出 Excel（带格式、汇总行）
-- Gitee 自动更新检查
+- GitHub 自动更新检查（Gitee 为镜像）
 
 ### 备份策略系统
 
@@ -85,7 +85,7 @@ uv run python src/invoice_tool.py
 | `update_invoice` | 修改发票标签和备注 |
 | `add_attachment` | 给发票添加附件（截图、文档等） |
 | `delete_invoice` | 删除发票记录及关联 PDF |
-| `check_update` | 检查 Gitee 新版本 |
+| `check_update` | 检查 GitHub 新版本 |
 
 ### 使用示例（在 Claude Code 中）
 

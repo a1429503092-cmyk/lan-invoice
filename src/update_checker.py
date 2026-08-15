@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""更新检查 — 从 Gitee Releases 获取最新版本信息"""
+"""更新检查 — 从 GitHub Releases 获取最新版本信息"""
 
 from PyQt5.QtCore import QObject, QUrl
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 
-GITEE_API = "https://gitee.com/api/v5/repos/GUYI33/lan-invoice/releases/latest"
+GITHUB_API = "https://api.github.com/repos/a1429503092-cmyk/lan-invoice/releases/latest"
 
 
 class UpdateChecker(QObject):
@@ -21,7 +21,7 @@ class UpdateChecker(QObject):
         self._skipped = ver
 
     def check(self):
-        req = QNetworkRequest(QUrl(GITEE_API))
+        req = QNetworkRequest(QUrl(GITHUB_API))
         req.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
         self._nam.get(req)
 
@@ -42,7 +42,7 @@ class UpdateChecker(QObject):
             if assets:
                 download_url = assets[0].get("browser_download_url", "")
             if not download_url:
-                download_url = f"https://gitee.com/GUYI33/lan-invoice/releases/tag/v{tag}"
+                download_url = f"https://github.com/a1429503092-cmyk/lan-invoice/releases/tag/v{tag}"
             if self._version_gt(tag, self._current):
                 if self._skipped and tag == self._skipped:
                     self.check_finished.emit(True, self._current, "")
