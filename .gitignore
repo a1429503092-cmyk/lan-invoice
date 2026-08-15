@@ -63,3 +63,4 @@ config.json
 # 脚本缓存
 scripts/.cache/
 *.db
+build-nuitka*/
