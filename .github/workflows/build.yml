@@ -118,14 +118,26 @@ jobs:
       - name: Smoke test (MCP over stdio)
         shell: pwsh
         run: |
-          # 注意：管道末尾不能放 Select-Object——cmdlet 会清空 $LASTEXITCODE
-          # （实测 $null -ne 0 误判失败），须让 exe 作为管道最后一个命令
-          $req = '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
-          $resp = $req | & ".\build-nuitka\lan-invoice-nuitka.exe" --mcp 2>&1
-          if ($LASTEXITCODE -ne 0) { throw "MCP 冒烟失败，退出码 $LASTEXITCODE" }
-          $obj = ($resp | Select-Object -First 1) | ConvertFrom-Json
-          if ($obj.result.serverInfo.name -ne "invoice-tool") { throw "响应异常: $resp" }
-          Write-Host "MCP 冒烟通过: $($obj.result.serverInfo.name) v$($obj.result.serverInfo.version)"
+          # GUI 子系统 exe（--windows-console-mode=disable）在 pwsh 管道下
+          # 异步启动不等待，$LASTEXITCODE 为空（实测 $null -ne 0 误判失败）。
+          # 改用 Python subprocess 模拟真实 MCP 客户端（与 Claude Code 同方式）
+          @'
+          import subprocess, json, sys, os
+          req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover"}) + "\n"
+          exe = os.path.abspath(r".\build-nuitka\lan-invoice-nuitka.exe")
+          p = subprocess.Popen([exe, "--mcp"], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+          try:
+              out, err = p.communicate(req.encode(), timeout=30)
+          except subprocess.TimeoutExpired:
+              p.kill(); print("MCP 冒烟失败: 30 秒超时"); sys.exit(1)
+          if p.returncode not in (0, None):
+              print(f"MCP 冒烟失败: 退出码 {p.returncode}\n{err.decode('utf-8', 'replace')[:500]}")
+              sys.exit(1)
+          obj = json.loads(out.decode("utf-8", "replace").splitlines()[0])
+          assert obj["result"]["serverInfo"]["name"] == "invoice-tool", out
+          print(f"MCP 冒烟通过: v{obj['result']['serverInfo']['version']}")
+          '@ | python -
 
       - name: Size report
         shell: pwsh
