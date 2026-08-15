@@ -18,7 +18,69 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
+  # ── 安装包（主产物）：Nuitka standalone + Inno Setup ──
+  # standalone 目录启动免解压（MCP 0.2s vs onefile 2.15s），
+  # 安装版 EXE 固定名 lan-invoice.exe，覆盖更新后 MCP 配置不变
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pillow nuitka zstandard
+
+      - name: Build with Nuitka (standalone)
+        shell: pwsh
+        run: |
+          # Nuitka 2.x 语法：--mode=standalone（目录，免解压）、--enable-plugins 复数
+          python -m nuitka --mode=standalone `
+            --enable-plugins=pyqt5,matplotlib `
+            --windows-console-mode=disable `
+            --windows-icon-from-ico=icon.ico `
+            --include-data-dir=src/ui/icons=ui/icons `
+            --assume-yes-for-downloads `
+            --output-dir=dist `
+            --output-filename=lan-invoice.exe `
+            src/invoice_tool.py
+
+      - name: Install Inno Setup 6
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $iscc) { throw "ISCC.exe not found" }
+            Write-Host "ISCC at: $($iscc.FullName)"
+          }
+
+      - name: Prepare installer script
+        shell: pwsh
+        run: pwsh -File scripts/release_artifacts.ps1
+
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "dist/setup.iss"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-invoice-installer
+          path: |
+            dist/lan-invoice_*_setup.exe
+          retention-days: 30
+
+  # ── 便携版：PyInstaller 单文件（保持现状，启动稍慢但单文件易分发）──
+  build-portable:
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -35,14 +97,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller pillow
 
-      - name: Diagnostics
-        shell: pwsh
-        run: |
-          python --version
-          pip show pyinstaller | Select-String "Version"
-          Get-ChildItem src | Select-Object -First 5 Name
-          Get-ChildItem *.spec | Select-Object Name
-
       - name: Install UPX
         shell: pwsh
         run: |
@@ -50,110 +104,22 @@ jobs:
           choco install upx -y --no-progress | Out-Null
           if (-not $?) { Write-Warning "UPX 安装失败，跳过压缩（不影响打包）" }
 
-      - name: Install Inno Setup 6
-        shell: pwsh
-        run: |
-          choco install innosetup -y --no-progress
-          # choco 包安装到 Program Files (x86)\Inno Setup 6
-          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
-            # 兼容 choco 新包路径
-            $iscc = Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $iscc) { throw "ISCC.exe not found" }
-            Write-Host "ISCC at: $($iscc.FullName)"
-          }
-
       - name: Build EXE (PyInstaller + UPX)
         run: |
           pyinstaller "发票归档.spec" --clean --noconfirm
         shell: pwsh
 
-      - name: Prepare release artifacts
-        shell: pwsh
-        run: pwsh -File scripts/release_artifacts.ps1
-
-      - name: Build installer (Inno Setup)
+      - name: Rename to versioned portable
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "dist/setup.iss"
+          $ver = (Get-Content "src/version.py" | Select-String 'APP_VERSION = "([^"]+)"').Matches[0].Groups[1].Value
+          Copy-Item "dist/lan-invoice.exe" "dist/lan-invoice_$ver.exe" -Force
+          Write-Host "便携版: lan-invoice_$ver.exe"
 
-      - name: Upload artifacts
+      - name: Upload portable artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lan-invoice-build
+          name: lan-invoice-portable
           path: |
             dist/lan-invoice_*.exe
           retention-days: 30
-
-  # ── Nuitka 并行实验（评估迁移可行性，不影响主发布流程）──
-  # 目标：对比 PyInstaller（主 job）与 Nuitka 的体积/启动/误报。
-  # 结论未定前 continue-on-error，失败不阻塞发布。
-  experiment-nuitka:
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pillow nuitka zstandard
-
-      - name: Build with Nuitka (onefile)
-        shell: pwsh
-        run: |
-          # Nuitka 2.x 语法：--mode=onefile（单文件）、--enable-plugins 复数
-          python -m nuitka --mode=onefile `
-            --enable-plugins=pyqt5,matplotlib `
-            --windows-console-mode=disable `
-            --windows-icon-from-ico=icon.ico `
-            --include-data-dir=src/ui/icons=ui/icons `
-            --assume-yes-for-downloads `
-            --output-dir=build-nuitka `
-            --output-filename=lan-invoice-nuitka.exe `
-            src/invoice_tool.py
-
-      - name: Smoke test (MCP over stdio)
-        shell: pwsh
-        run: |
-          # GUI 子系统 exe（--windows-console-mode=disable）在 pwsh 管道下
-          # 异步启动不等待，$LASTEXITCODE 为空（实测 $null -ne 0 误判失败）。
-          # 改用 Python subprocess 模拟真实 MCP 客户端（与 Claude Code 同方式）
-          @'
-          import subprocess, json, sys, os
-          # CI runner stdout 为 GBK，print 中文会 UnicodeEncodeError
-          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-          req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover"}) + "\n"
-          exe = os.path.abspath(r".\build-nuitka\lan-invoice-nuitka.exe")
-          p = subprocess.Popen([exe, "--mcp"], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-          try:
-              out, err = p.communicate(req.encode(), timeout=30)
-          except subprocess.TimeoutExpired:
-              p.kill(); print("MCP smoke FAILED: 30s timeout"); sys.exit(1)
-          if p.returncode not in (0, None):
-              print(f"MCP smoke FAILED: exit {p.returncode}\n{err.decode('utf-8', 'replace')[:500]}")
-              sys.exit(1)
-          obj = json.loads(out.decode("utf-8", "replace").splitlines()[0])
-          assert obj["result"]["serverInfo"]["name"] == "invoice-tool", out
-          print(f"MCP smoke OK: v{obj['result']['serverInfo']['version']}")
-          '@ | python -
-
-      - name: Size report
-        shell: pwsh
-        run: |
-          $f = Get-Item ".\build-nuitka\lan-invoice-nuitka.exe"
-          Write-Host "Nuitka 单文件产物大小: $([math]::Round($f.Length/1MB, 2)) MB"
-
-      - name: Upload Nuitka experiment artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: lan-invoice-nuitka-experiment
-          path: build-nuitka/lan-invoice-nuitka.exe
-          retention-days: 14

@@ -46,8 +46,12 @@ ZIP_NAME = f"lan-invoice_{APP_VERSION}_portable.zip"  # 便携 ZIP
 # MCP 配置/快捷方式指向此路径永远有效，更新后无需改配置
 INSTALLED_EXE_NAME = "lan-invoice.exe"
 
+# Nuitka standalone 产物目录名（构建免解压，启动 0.2s vs onefile 2.15s）
+DIST_DIR_NAME = "invoice_tool.dist"
+
 DIST_DIR = PROJECT_ROOT / "dist"
 EXE_SRC = DIST_DIR / EXE_NAME
+DIST_OUT = DIST_DIR / DIST_DIR_NAME  # Nuitka standalone 产物目录
 ICON_SRC = PROJECT_ROOT / "icon.ico"
 SETUP_EXE = DIST_DIR / SETUP_NAME
 SETUP_ZIP = DIST_DIR / ZIP_NAME
@@ -101,9 +105,13 @@ if not exist "!APP_DIR!" (
 :: ---- 清理旧版本文件（早期版本号命名的 EXE）----
 del "!APP_DIR!\lan-invoice_*.exe" /q >nul 2>&1
 
-:: ---- 复制文件 ----
+:: ---- 复制程序（standalone 目录，覆盖安装）----
 echo [1/3] 复制程序文件...
-copy "%~dp0%EXE_NAME%" "!APP_DIR!\%EXE_NAME%" /Y >nul
+if exist "%~dp0{dist_dir}" (
+    xcopy "%~dp0{dist_dir}" "!APP_DIR!" /E /I /Y >nul
+) else (
+    copy "%~dp0%EXE_NAME%" "!APP_DIR!\%EXE_NAME%" /Y >nul
+)
 if errorlevel 1 (
     echo [错误] 复制文件失败
     pause
@@ -154,6 +162,7 @@ pause
         app_name=APP_NAME,
         app_version=APP_VERSION,
         exe_name=INSTALLED_EXE_NAME,
+        dist_dir=DIST_DIR_NAME,
     )
 
     bat_path = target_dir / "install.bat"
@@ -276,7 +285,12 @@ def build_with_docker_innosetup(source_dir: Path) -> bool:
 
 
 def _generate_iss(source_dir: Path) -> str:
-    """生成 Inno Setup 6 安装脚本（全部英文文件名，Wine/CI 友好）。"""
+    """生成 Inno Setup 6 安装脚本（全部英文文件名，Wine/CI 友好）。
+
+    安装 Nuitka standalone 产物目录（invoice_tool.dist/*），启动免解压
+    （实测 MCP 启动 0.2s vs onefile 2.15s）。exe 为固定名
+    lan-invoice.exe，MCP 配置/快捷方式指向固定路径，覆盖更新后不变。
+    """
     return f"""; Inno Setup Script — auto-generated v{APP_VERSION}
 ; 界面文字用中文，文件名/路径用英文（Docker/Wine 中文文件名兼容问题）
 [Setup]
@@ -298,7 +312,7 @@ CloseApplications=yes
 Type: files; Name: "{{app}}\\lan-invoice_*.exe"
 
 [Files]
-Source: "{ASCII_EXE_NAME}"; DestDir: "{{app}}"; DestName: "{INSTALLED_EXE_NAME}"
+Source: "{DIST_DIR_NAME}\\*"; DestDir: "{{app}}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\{INSTALLED_EXE_NAME}"
@@ -525,7 +539,13 @@ def build_with_zip(source_dir: Path) -> bool:
 
     try:
         with zipfile.ZipFile(SETUP_ZIP, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(source_dir / ASCII_EXE_NAME, ASCII_EXE_NAME)
+            if (source_dir / DIST_DIR_NAME).is_dir():
+                # 便携版 = standalone 目录压缩（解压即用，启动免解压）
+                for f in (source_dir / DIST_DIR_NAME).rglob("*"):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(source_dir))
+            else:
+                zf.write(source_dir / ASCII_EXE_NAME, ASCII_EXE_NAME)
             zf.write(source_dir / "icon.ico", "icon.ico")
             zf.write(source_dir / "install.bat", "install.bat")
 
@@ -546,21 +566,29 @@ def main():
     print()
 
     # ---- 检查源文件 ----
-    if not EXE_SRC.exists():
-        print("[ERROR] 找不到主程序: %s" % EXE_SRC)
-        print("       请先使用 PyInstaller 打包 EXE")
+    # 优先 standalone 目录（Nuitka，启动免解压），回退单 EXE（PyInstaller）
+    dist_dir = DIST_DIR / DIST_DIR_NAME
+    if dist_dir.is_dir():
+        src_desc = f"standalone 目录 {dist_dir.name}"
+    elif EXE_SRC.exists():
+        dist_dir = None
+        src_desc = f"单文件 {EXE_SRC.name}"
+    else:
+        print("[ERROR] 找不到打包产物: %s 或 %s" % (DIST_DIR_NAME, EXE_SRC))
+        print("       请先构建（Nuitka standalone 或 PyInstaller）")
         return 1
-
-    exe_size_mb = EXE_SRC.stat().st_size / 1024 / 1024
-    print("[INFO] 主程序: %s (%.1f MB)" % (EXE_SRC.name, exe_size_mb))
+    print("[INFO] 产物: %s" % src_desc)
     print()
 
     # ---- 创建临时工作目录 ----
     with tempfile.TemporaryDirectory(prefix="invoice_setup_") as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        # 复制文件（使用 ASCII 安全文件名）
-        shutil.copy2(EXE_SRC, tmp_path / ASCII_EXE_NAME)
+        # 复制产物（使用 ASCII 安全文件名）
+        if dist_dir is not None:
+            shutil.copytree(dist_dir, tmp_path / DIST_DIR_NAME)
+        else:
+            shutil.copy2(EXE_SRC, tmp_path / ASCII_EXE_NAME)
         if ICON_SRC.exists():
             shutil.copy2(ICON_SRC, tmp_path / "icon.ico")
         print("[INFO] 文件已就绪")
@@ -574,15 +602,13 @@ def main():
         # ---- 方式1: Docker + Inno Setup（首选） ----
         ok = build_with_docker_innosetup(tmp_path)
 
-        # ---- 方式2: NSIS（Windows 本机） ----
-        if not ok:
+        # ---- 方式2/3: NSIS / IExpress（仅单文件模式，standalone 目录不支持）----
+        if not ok and dist_dir is None:
             print("[INFO] Docker 不可用，尝试 NSIS...")
             ok = build_with_nsis(tmp_path)
-
-        # ---- 方式3: IExpress（Windows 内置） ----
-        if not ok:
-            print("[INFO] NSIS 不可用，尝试 IExpress...")
-            ok = build_with_iexpress(tmp_path)
+            if not ok:
+                print("[INFO] NSIS 不可用，尝试 IExpress...")
+                ok = build_with_iexpress(tmp_path)
 
         # ---- 方式4: ZIP（纯 Python 回退） ----
         if not ok:

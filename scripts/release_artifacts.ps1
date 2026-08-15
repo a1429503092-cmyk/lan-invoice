@@ -1,6 +1,7 @@
-# 发票归档 — 生成发布产物（便携版 EXE 副本 + Inno Setup 脚本）
-# 由 GitHub Actions workflow 调用，也可本地手动运行：
+# 发票归档 — 生成 Inno Setup 安装脚本（Nuitka standalone 产物）
+# 由 GitHub Actions workflow（build-installer job）调用，也可本地手动运行：
 #   pwsh -File scripts/release_artifacts.ps1
+# 前置：dist/invoice_tool.dist/（Nuitka --mode=standalone --output-dir=dist 产物）
 
 $ErrorActionPreference = "Stop"
 
@@ -14,16 +15,10 @@ if (-not $ver) {
 }
 Write-Host "Version: $ver"
 
-# 便携版副本
-Copy-Item "dist/lan-invoice.exe" "dist/lan-invoice_$ver.exe" -Force
-
-# ASCII 文件名（Inno Setup 编译用，避免中文/点号问题）
-$ascii = "lan_invoice_" + ($ver -replace '\.', '_') + ".exe"
-Copy-Item "dist/lan-invoice_$ver.exe" "dist/$ascii" -Force
-
 # 生成 Inno Setup 脚本
-# 安装版用固定 EXE 名 lan-invoice.exe：MCP 配置/快捷方式指向固定路径，
-# 覆盖更新后无需改动；同时清理旧版本号命名的遗留 EXE
+# 安装 Nuitka standalone 目录（invoice_tool.dist/*），启动免解压（0.2s vs
+# onefile 2.15s）。EXE 固定名 lan-invoice.exe：MCP 配置/快捷方式指向固定
+# 路径，覆盖更新后无需改动；同时清理旧版本号命名的遗留 EXE
 $iss = @"
 ; Inno Setup Script - auto-generated v$ver
 [Setup]
@@ -43,7 +38,7 @@ CloseApplications=yes
 Type: files; Name: "{app}\lan-invoice_*.exe"
 
 [Files]
-Source: "$ascii"; DestDir: "{app}"; DestName: "lan-invoice.exe"
+Source: "invoice_tool.dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\发票归档"; Filename: "{app}\lan-invoice.exe"
