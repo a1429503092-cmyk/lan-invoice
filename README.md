@@ -131,12 +131,15 @@ uv run python src/invoice_tool.py --http --port 8080
 推送 `v*` 标签自动触发 `.github/workflows/build.yml`：
 
 ```bash
-git push origin v5.6.1
+git push origin v5.6.3
 ```
 
-windows-latest runner 原生打包：PyInstaller（含 UPX 压缩）→ Inno Setup 安装包 → artifacts 下载。
+双 job 并行构建：
 
-> 注：PyInstaller 不支持交叉编译，Windows EXE 必须在 Windows 环境打包。
+- **build-installer**（主产物）：Nuitka standalone → Inno Setup 安装包。standalone 目录启动免解压（MCP 连接 0.2s、GUI 2s 内、杀毒零误报），安装版 EXE 固定名 `lan-invoice.exe`，覆盖更新后 MCP 配置无需改动。
+- **build-portable**：PyInstaller 单文件便携版（单文件易分发，启动稍慢）。
+
+> 注：两者均不支持交叉编译，必须在 Windows 环境打包（CI runner 原生 Windows）。
 
 ### 方式二：Docker 容器（本地，不依赖本机配置）
 
@@ -145,7 +148,7 @@ docker build -t lan-invoice-builder -f Dockerfile.build .
 docker run --rm -v $PWD:/src -v $PWD/dist:/out lan-invoice-builder
 ```
 
-Wine 交叉编译：Windows Python + PyInstaller + UPX + Inno Setup，产物输出到 `dist/`。
+Wine 交叉编译：Windows Python + PyInstaller + UPX + Inno Setup，产物输出到 `dist/`（仅便携版/旧式安装包，Nuitka 不支持 Wine 构建）。
 
 ### 方式三：本机一键打包（Windows）
 
@@ -154,7 +157,7 @@ build.bat        # Windows
 bash build.sh    # Git Bash / macOS / Linux
 ```
 
-打包优化：PyInstaller 排除 17 个未使用的 Qt 模块（QtQuick/Qml/Multimedia 等），启用 `optimize=2` + UPX 压缩（安装 UPX 后自动生效，体积约 105MB → 84MB）。
+本机构建 Nuitka standalone（约 1.5 小时，pymupdf C 扩展编译耗时）或 PyInstaller（排除 17 个未使用 Qt 模块 + UPX，约 105MB → 84MB）。
 
 ## 数据存储
 

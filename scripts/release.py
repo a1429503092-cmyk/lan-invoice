@@ -15,8 +15,6 @@ import sys
 import re
 import subprocess
 import json
-import shutil
-import zipfile
 import http.client
 from urllib.parse import urlencode
 from datetime import datetime
@@ -25,7 +23,6 @@ REPO_OWNER = "GUYI33"
 REPO_NAME = "lan-invoice"
 API_HOST = "gitee.com"
 VERSION_FILE = "src/version.py"
-SPEC_FILE = "发票归档.spec"
 DIST_DIR = "dist"
 
 
@@ -50,26 +47,6 @@ def write_version(old: str, new: str):
     with open(VERSION_FILE, "w", encoding="utf-8") as f:
         f.write(content)
     print(f"版本号: {old} → {new}")
-
-
-def smoke_test():
-    print("冒烟测试…")
-    result = subprocess.run(
-        ["uv", "run", "python", "tests/test_smoke.py"],
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.exit(f"冒烟测试失败 (exit={result.returncode})，中止发布")
-    print("冒烟测试通过")
-
-
-def build():
-    print("构建 EXE...")
-    subprocess.run(
-        ["uv", "run", "pyinstaller", SPEC_FILE, "--clean", "--noconfirm"],
-        check=True
-    )
-    print("构建完成")
 
 
 def git_commit_and_tag(ver: str):
@@ -213,6 +190,17 @@ VSVersionInfo(
 
 
 def main():
+    """发布流程（构建由 CI 完成，本脚本仅发布 CI 产物）。
+
+    用法:
+      uv run python scripts/release.py --ver 5.6.4   # 发布（需 dist/ 有 CI 产物）
+      uv run python scripts/release.py --dry          # 仅检查产物，不发布
+
+    前置: CI（build-installer / build-portable）构建完成后，
+    下载两个 artifact 到 dist/：
+      dist/lan-invoice_{ver}_setup.exe  （安装版，Nuitka standalone）
+      dist/lan-invoice_{ver}.exe        （便携版，PyInstaller）
+    """
     dry = "--dry" in sys.argv
     ver_arg = None
     for a in sys.argv[1:]:
@@ -222,15 +210,24 @@ def main():
     old_ver = read_version()
     ver = ver_arg or bump_version(old_ver)
 
-    if ver != old_ver:
+    # dry 模式只检查产物，不写版本/不打 tag
+    if ver != old_ver and not dry:
         write_version(old_ver, ver)
+        sync_version_info(ver)
 
-    sync_version_info(ver)
-    smoke_test()
-    build()
+    # ── 检查 CI 产物 ──
+    setup_exe = os.path.join(DIST_DIR, f"lan-invoice_{ver}_setup.exe")
+    portable_exe = os.path.join(DIST_DIR, f"lan-invoice_{ver}.exe")
+    missing = [p for p in (setup_exe, portable_exe) if not os.path.exists(p)]
+    if missing:
+        sys.exit(
+            f"缺少 CI 产物（{len(missing)} 个）:\n  " +
+            "\n  ".join(missing) +
+            "\n请先从 GitHub Actions 下载 artifact 到 dist/ 再发布")
+    print(f"产物就绪: {os.path.basename(setup_exe)} / {os.path.basename(portable_exe)}")
 
     if dry:
-        print(f"[dry] 跳过发布，EXE 在 {DIST_DIR}/")
+        print("[dry] 跳过发布")
         return
 
     # 从 .env 文件加载（优先级低于环境变量）
@@ -248,84 +245,20 @@ def main():
     if not token:
         sys.exit("请设置环境变量 GITEE_TOKEN 或在项目根目录创建 .env 文件")
 
-    exe_path = os.path.join(DIST_DIR, f"发票归档_v{ver}.exe")
-    src = os.path.join(DIST_DIR, "发票归档.exe")
-    if os.path.exists(src):
-        os.replace(src, exe_path)
-    if not os.path.exists(exe_path):
-        sys.exit(f"EXE 不存在: {exe_path}")
-
-    # 便携版 ZIP
-    zip_path = os.path.join(DIST_DIR, f"发票归档_v{ver}_portable.zip")
-    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.write(exe_path, os.path.basename(exe_path))
-    print(f"便携版 ZIP: {zip_path}")
-
-    # Inno Setup 安装器（如果 ISCC 可用）
-    setup_base = f"发票归档_v{ver}_setup"
-    iss_path = os.path.join(DIST_DIR, f"setup_v{ver}.iss")
-    _write_iss(iss_path, "发票归档", os.path.basename(exe_path), ver)
-    iscc = shutil.which("iscc")
-    if not iscc:
-        user_iscc = os.path.join(os.environ.get("LOCALAPPDATA", ""),
-                                 "Programs", "Inno Setup 6", "ISCC.exe")
-        if os.path.exists(user_iscc):
-            iscc = user_iscc
-    if iscc:
-        env = os.environ.copy()
-        iscc_dir = os.path.dirname(iscc)
-        env["PATH"] = iscc_dir + os.pathsep + env.get("PATH", "")
-        subprocess.run([iscc, f"/O{DIST_DIR}", f"/F{setup_base}",
-                        iss_path], check=True, env=env)
-        print(f"安装器: {DIST_DIR}/{setup_base}.exe")
-    else:
-        print("Inno Setup 未安装，跳过安装器打包")
-        setup_base = None
-
     if ver != old_ver:
         git_commit_and_tag(ver)
 
     changelog = """\
-• 导入预览对话框全面升级：从 4 列扩展到 11 列（文件名/发票类型/购买方/
-  销售方/金额/税额/价税合计/发票号码/开票日期/状态），底部实时显示已选
-  发票的金额合计/税额合计/价税合计，点击表头可排序，新增「取消全选」按钮
-• 发布时自动生成便携版 ZIP（发票归档_vx.x.x_portable.zip）
-• 更新弹窗新增「跳过此版本」按钮，不再反复提醒同一版本
-• 安装版本信息（右键→属性→详细信息显示发布者、版本号、版权）"""
+• MCP 导入修复：代理字符（surrogate）导致的无响应/超时问题
+• 更新自动化：软件内直接下载安装包并自动覆盖更新（无需浏览器）
+• 安装版切 Nuitka standalone：启动 0.2s、杀毒软件零误报
+• GUI 启动提速：字体按需加载（约快 1.8s）
+• 安装版固定 EXE 名：覆盖更新后 MCP 配置永久有效
+• MCP 无头模式接入文件日志"""
     release = create_release(ver, token, changelog)
-    upload_asset(release["id"], zip_path, token)
-    if setup_base:
-        sp = os.path.join(DIST_DIR, f"{setup_base}.exe")
-        if os.path.exists(sp):
-            upload_asset(release["id"], sp, token)
+    upload_asset(release["id"], setup_exe, token)
+    upload_asset(release["id"], portable_exe, token)
     print(f"\n发布成功: https://gitee.com/{REPO_OWNER}/{REPO_NAME}/releases/tag/v{ver}")
-
-
-def _write_iss(iss_path: str, app_name: str, exe_name: str, ver: str):
-    """生成 Inno Setup 脚本"""
-    content = f"""; Inno Setup Script — 自动生成
-[Setup]
-AppName={app_name}
-AppVersion={ver}
-AppPublisher=GUYI33
-DefaultDirName={{pf}}\\{app_name}
-DefaultGroupName={app_name}
-Compression=lzma2/ultra64
-SolidCompression=yes
-UninstallDisplayName={app_name}
-
-[Files]
-Source: "{exe_name}"; DestDir: "{{app}}"
-
-[Icons]
-Name: "{{group}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
-Name: "{{commondesktop}}\\{app_name}"; Filename: "{{app}}\\{exe_name}"
-
-[Run]
-Filename: "{{app}}\\{exe_name}"; Description: "启动 {app_name}"; Flags: nowait postinstall
-"""
-    with open(iss_path, "w", encoding="utf-8") as f:
-        f.write(content)
 
 
 if __name__ == "__main__":
