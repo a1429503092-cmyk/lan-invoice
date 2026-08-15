@@ -243,7 +243,8 @@ def main():
                 if k.strip() not in os.environ:
                     os.environ[k.strip()] = v.strip()
 
-    token = os.environ.get("GITEE_TOKEN")
+    # 兼容两种环境变量名（GITEE_ACCESSTOKEN 为系统实际配置）
+    token = os.environ.get("GITEE_TOKEN") or os.environ.get("GITEE_ACCESSTOKEN")
     if not token:
         sys.exit("请设置环境变量 GITEE_TOKEN 或在项目根目录创建 .env 文件")
 
