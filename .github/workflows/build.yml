@@ -118,10 +118,12 @@ jobs:
       - name: Smoke test (MCP over stdio)
         shell: pwsh
         run: |
+          # 注意：管道末尾不能放 Select-Object——cmdlet 会清空 $LASTEXITCODE
+          # （实测 $null -ne 0 误判失败），须让 exe 作为管道最后一个命令
           $req = '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
-          $resp = ($req | & ".\build-nuitka\lan-invoice-nuitka.exe" --mcp 2>$null | Select-Object -First 1)
+          $resp = $req | & ".\build-nuitka\lan-invoice-nuitka.exe" --mcp 2>&1
           if ($LASTEXITCODE -ne 0) { throw "MCP 冒烟失败，退出码 $LASTEXITCODE" }
-          $obj = $resp | ConvertFrom-Json
+          $obj = ($resp | Select-Object -First 1) | ConvertFrom-Json
           if ($obj.result.serverInfo.name -ne "invoice-tool") { throw "响应异常: $resp" }
           Write-Host "MCP 冒烟通过: $($obj.result.serverInfo.name) v$($obj.result.serverInfo.version)"
 
