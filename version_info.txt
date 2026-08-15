@@ -2,8 +2,8 @@
 #
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(5, 6, 2, 0),
-    prodvers=(5, 6, 2, 0),
+    filevers=(5, 6, 4, 0),
+    prodvers=(5, 6, 4, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
       StringTable(
         u'080404b0',
         [StringStruct(u'CompanyName', u'GUYI33'),
-         StringStruct(u'FileDescription', u'lan-invoice - 电子发票 PDF 批量识别与归档'),
+         StringStruct(u'FileDescription', u'发票归档 - 电子发票 PDF 批量识别与归档'),
          StringStruct(u'FileVersion', u'5.6.3'),
-         StringStruct(u'InternalName', u'lan-invoice'),
+         StringStruct(u'InternalName', u'发票归档'),
          StringStruct(u'LegalCopyright', u'Copyright (C) 2025-2026'),
-         StringStruct(u'OriginalFilename', u'lan-invoice_v5.6.3.exe'),
+         StringStruct(u'OriginalFilename', u'发票归档_v5.6.3.exe'),
          StringStruct(u'ProductName', u'发票归档'),
          StringStruct(u'ProductVersion', u'5.6.3')])
     ]),
